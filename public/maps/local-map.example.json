@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "reference_latitude_deg": 40.242865,
+  "reference_longitude_deg": 140.01045,
+  "image": "local-map.png",
+  "bounds_enu_m": {
+    "west": -2000,
+    "east": 2000,
+    "south": -2000,
+    "north": 2000
+  },
+  "attribution": "出典：地理院タイル",
+  "processed_notice": "地理院タイルを加工して作成"
+}

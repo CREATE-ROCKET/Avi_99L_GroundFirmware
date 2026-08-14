@@ -11,8 +11,10 @@
     {
       devShells.${system}.default = pkgs.mkShell {
         packages = [
+          pkgs.appimage-run
           pkgs.electron
           pkgs.nodejs_22
+          pkgs.socat
         ];
 
         ELECTRON_OVERRIDE_DIST_PATH = "${pkgs.electron}/bin";

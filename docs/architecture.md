@@ -7,24 +7,28 @@ Avi_tenkatenn_board USB Serial
             │
             ▼
 Electron Main process
-  ├─ line framing
-  ├─ raw/structured logging + fsync
-  ├─ serial port lifecycle
-  └─ in-memory line replay buffer
-            │ IPC
+  ├─ GroundSerialService (single SerialPort owner)
+  ├─ byte framing + strict USB v1 parser
+  ├─ SessionWriter (raw/JSONL + fsync)
+  ├─ bounded command queue
+  └─ bounded replay + stream ID
+            │ typed IPC / isolated preload
             ▼
 Renderer
-  ├─ USB record parser
-  ├─ LoRa packet decoder
+  ├─ valid @RXだけ既存LoRa packet decoderへ
   ├─ telemetry state/history
+  ├─ bounded packet monitor / latency samples
+  ├─ command lifecycle correlation
   ├─ Three.js
   ├─ charts
   └─ offline map
 ```
 
-Renderer reloadではMain processとUSB/session loggingが継続する。
+Renderer reloadではMain processとUSB/session loggingが継続する。snapshot replayとlive eventはstream IDでdeduplicateし、replay中は再描画をまとめる。
 
-自動試験では`ground-cli.mjs`が同じUSB line parserを再利用し、Electronを介さずSerialPortのRX/TXをJSON Linesへ記録する。GUIとCLIは同一portを同時に所有しない。
+自動試験では`ground-cli.mjs`がMain processと同じ`GroundSerialService`、byte framer、USB v1 parser、session writerを再利用し、SerialPortのRX/TXをJSON Linesへ記録する。GUIとCLIは同一portを同時に所有しない。
+
+BrowserWindowは`contextIsolation=true`、`nodeIntegration=false`、sandbox有効を維持する。Rendererへserialportやfile handleは公開しない。
 
 ## Production hardening candidate
 

@@ -1,28 +1,25 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+function subscribe(channel, callback) {
+  if (typeof callback !== 'function') throw new TypeError('callback must be a function');
+  const handler = (_event, value) => callback(value);
+  ipcRenderer.on(channel, handler);
+  return () => ipcRenderer.removeListener(channel, handler);
+}
+
 contextBridge.exposeInMainWorld('groundApi', {
   listPorts: () => ipcRenderer.invoke('ground:listPorts'),
-  connect: (options) => ipcRenderer.invoke('ground:connect', options),
+  connect: (path) => ipcRenderer.invoke('ground:connect', { path }),
   disconnect: () => ipcRenderer.invoke('ground:disconnect'),
-  sendLine: (line) => ipcRenderer.invoke('ground:sendLine', line),
+  sendCommand: (command) => ipcRenderer.invoke('ground:sendCommand', command),
   getSession: () => ipcRenderer.invoke('ground:getSession'),
   chooseMap: () => ipcRenderer.invoke('ground:chooseMap'),
   rendererReady: () => ipcRenderer.send('ground:rendererReady'),
   rendererReload: () => ipcRenderer.send('ground:rendererReload'),
-  recordDecoded: (record) => ipcRenderer.send('ground:decoded', record),
-  onLine: (callback) => {
-    const handler = (_event, record) => callback(record);
-    ipcRenderer.on('ground:line', handler);
-    return () => ipcRenderer.removeListener('ground:line', handler);
-  },
-  onLogStatus: (callback) => {
-    const handler = (_event, status) => callback(status);
-    ipcRenderer.on('ground:logStatus', handler);
-    return () => ipcRenderer.removeListener('ground:logStatus', handler);
-  },
-  onConnection: (callback) => {
-    const handler = (_event, status) => callback(status);
-    ipcRenderer.on('ground:connection', handler);
-    return () => ipcRenderer.removeListener('ground:connection', handler);
-  },
+  recordLatency: (metric) => ipcRenderer.send('ground:recordLatency', metric),
+  recordAppDecodeMismatch: (mismatch) => ipcRenderer.send('ground:recordAppDecodeMismatch', mismatch),
+  onSerialLine: (callback) => subscribe('ground:serialLine', callback),
+  onSessionStatus: (callback) => subscribe('ground:sessionStatus', callback),
+  onConnectionStatus: (callback) => subscribe('ground:connectionStatus', callback),
+  onError: (callback) => subscribe('ground:error', callback),
 });

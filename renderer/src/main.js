@@ -5,6 +5,7 @@ import { RocketView } from './three-view.js';
 import { LocalMapView } from './map-view.js';
 import { SharedTrackChart } from './chart.js';
 import { AlertSound } from './sound.js';
+import { escapeHtml } from '../../shared/html.js';
 
 const app = document.querySelector('#app');
 
@@ -107,6 +108,12 @@ let predictive = true;
 let syntheticRunning = false;
 let connected = false;
 let loggerHealthy = true;
+
+function percentile(values, fraction) {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)];
+}
 
 const rocketView = new RocketView(document.querySelector('#rocket-view'), store, {
   statusElement: document.querySelector('#model-status'),
@@ -216,7 +223,7 @@ function valueRow(item) {
   if (typeof display === 'number') display = `${display.toFixed(Math.abs(display) >= 100 ? 0 : 3)}${item.unit ? ` ${item.unit}` : ''}`;
   else if (typeof display === 'boolean') display = display ? 'YES' : 'NO';
   else if (display === null || display === undefined) display = item.status;
-  return `<tr class="${valid ? '' : 'invalid'}"><td>${item.packetName ?? ''}</td><td>${item.group}</td><td>${item.label}</td><td>${display}</td><td>${item.raw ?? '—'}</td><td>${item.status}</td></tr>`;
+  return `<tr class="${valid ? '' : 'invalid'}"><td>${escapeHtml(item.packetName ?? '')}</td><td>${escapeHtml(item.group)}</td><td>${escapeHtml(item.label)}</td><td>${escapeHtml(display)}</td><td>${escapeHtml(item.raw ?? '—')}</td><td>${escapeHtml(item.status)}</td></tr>`;
 }
 
 function renderOverview() {
@@ -237,6 +244,10 @@ function renderOverview() {
       <div><span>INVALID</span><strong>${store.invalidPackets}</strong></div>
       <div><span>LAST INTERVAL</span><strong>${store.lastIntervalMs === null ? '—' : `${store.lastIntervalMs} ms`}</strong></div>
       <div><span>EST. MISSED</span><strong>${store.estimatedMissed}</strong></div>
+      <div><span>SEQ GAP / DUP</span><strong>${store.sequenceGaps} / ${store.duplicateSequences}</strong></div>
+      <div><span>PARSER / APP</span><strong>${store.parserErrors} / ${store.appDecodeMismatches}</strong></div>
+      <div><span>TIME REQUEST</span><strong>${store.latestTimeRequestId ?? '—'}</strong></div>
+      <div><span>STORE / PAINT P95</span><strong>${percentile(store.storeLatenciesMs, .95) ?? '—'} / ${percentile(store.paintLatenciesMs, .95) ?? '—'} ms</strong></div>
     </div>
     <p class="inspector-note">全packet・全fieldは ALL VALUES と RAW PACKETS に保持される。現在値が存在しないfieldを0へ置換しない。</p>`;
 }
@@ -248,13 +259,27 @@ function renderAllValues() {
 }
 
 function renderRawPackets() {
-  const packets = [...store.rawPackets].reverse().slice(0, 180);
-  return `<div class="raw-list">${packets.map((packet) => `
-    <article class="raw-packet ${packet.metadata.valid ? '' : 'invalid'}">
-      <div><strong>${packet.packetName}</strong><span>${packet.metadata.hostTime?.toISOString?.() ?? new Date(packet.metadata.hostMs).toISOString()}</span></div>
-      <div class="raw-meta">SEQ ${packet.metadata.sequence ?? '—'} / RSSI ${packet.metadata.rssiDbm ?? '—'} dBm / ${packet.metadata.valid ? 'VALID' : packet.metadata.error ?? 'INVALID'}</div>
-      <code>${packet.metadata.rawHex ?? ''}</code>
-    </article>`).join('')}</div>`;
+  const entries = [...store.packetMonitor].reverse().slice(0, 180);
+  const content = entries.map((entry) => {
+    const record = entry.record;
+    const invalid = entry.type === 'parser-error'
+      || (record?.type === 'RX' && (!record.valid || entry.appDecodeMismatch));
+    const label = record?.type ?? entry.type;
+    const detail = record?.type === 'RX'
+      ? `SEQ ${record.seq} / RSSI ${record.rssiDbm ?? 'NA'} dBm / ${entry.appDecodeMismatch ? 'APP_DECODE_MISMATCH' : record.valid ? 'VALID' : record.error}`
+      : record?.type === 'TX'
+        ? `ID ${record.id} / ${record.ok ? 'SENT' : record.error}`
+        : record?.type === 'FRAG'
+          ? record.reason
+          : record?.type === 'SYS' ? record.event : entry.error?.code ?? '';
+    return `
+    <article class="raw-packet ${invalid ? 'invalid' : ''}">
+      <div><strong>${escapeHtml(label)}</strong><span>${escapeHtml(new Date(entry.hostMs).toISOString())}</span></div>
+      <div class="raw-meta">${escapeHtml(detail)}</div>
+      <code>${escapeHtml(entry.rawLine ?? record?.rawLine ?? '')}</code>
+    </article>`;
+  }).join('');
+  return `<div class="raw-list">${content}</div>`;
 }
 
 function renderInspector() {
@@ -266,18 +291,20 @@ function renderInspector() {
 function renderEvents() {
   const events = [...store.events].reverse().slice(0, 60);
   consoleContent.innerHTML = `<div class="event-list">${events.map((event) => `
-    <div class="event-row ${event.level}"><time>${event.sessionSec.toFixed(3)}</time><span>${event.label}</span></div>`).join('')}</div>`;
+    <div class="event-row ${event.level}"><time>${event.sessionSec.toFixed(3)}</time><span>${escapeHtml(event.label)}</span></div>`).join('')}</div>`;
 }
 
 function renderCommandConsole() {
+  const disabled = store.connection.connected ? '' : 'disabled';
+  const commands = [...store.commandTracker.commands].reverse().slice(0, 20);
   consoleContent.innerHTML = `
     <div class="command-console">
       <div class="quick-commands">
-        <button data-command="help">HELP</button><button data-command="ae">ACTUATOR ESTOP</button>
-        <button data-command="le">LIFTOFF ESTOP</button><button data-command="g 0x01">START SEQUENCE</button>
+        <button data-command="help" ${disabled}>HELP</button>
+        <button data-command="le" ${disabled}>LIFTOFF ESTOP</button>
       </div>
-      <form id="command-form"><input id="command-input" autocomplete="off" placeholder="g <command> [arg0 ... arg5] / local ..."/><button>SEND</button></form>
-      <div class="console-lines">${[...store.rawPackets].reverse().slice(0,20).map((packet)=>`<code>${packet.line ?? packet.metadata.rawHex}</code>`).join('')}</div>
+      <form id="command-form"><input id="command-input" autocomplete="off" ${disabled} placeholder="g <command> [arg0 ... arg5] / local ..."/><button ${disabled}>SEND</button></form>
+      <div class="console-lines">${commands.map((command) => `<code>#${command.localId} ${escapeHtml(command.state)} ${escapeHtml(command.text)} TX_ID=${command.transactionId ?? '—'}</code>`).join('')}</div>
     </div>`;
   document.querySelectorAll('[data-command]').forEach((button) => button.addEventListener('click', () => sendCommand(button.dataset.command)));
   document.querySelector('#command-form').addEventListener('submit', (event) => {
@@ -320,6 +347,10 @@ function redraw() {
   renderConsole();
   flightChart.draw();
   systemChart.draw();
+  requestAnimationFrame(() => {
+    const metric = store.markPaint();
+    if (metric && window.groundApi) window.groundApi.recordLatency(metric);
+  });
 }
 
 function triggerLiftoff(detail = {}) {
@@ -339,11 +370,20 @@ function triggerLiftoff(detail = {}) {
 async function sendCommand(line) {
   const normalized = String(line ?? '').trim();
   if (!normalized) return;
+  if (!store.connection.connected) {
+    showToast('CONNECT USB PORT FIRST');
+    return;
+  }
+  let tracked;
   try {
-    if (window.groundApi) await window.groundApi.sendLine(normalized);
+    tracked = store.queueOutboundCommand(normalized);
+    let result = null;
+    if (window.groundApi) result = await window.groundApi.sendCommand(normalized);
     else store.addEvent(`SIM TX / ${normalized}`, 'debug');
+    store.markCommandUsbWritten(tracked.localId, result?.localId ?? tracked.localId);
     showToast(`SENT / ${normalized}`);
   } catch (error) {
+    if (tracked) store.markCommandUsbWriteFailed(tracked.localId, error.message);
     store.addEvent(`TX FAILED / ${error.message}`, 'error');
     showToast(`TX FAILED / ${error.message}`);
   }
@@ -378,7 +418,7 @@ async function connectSelectedPort() {
     }
     const path = document.querySelector('#port-select').value;
     if (!path) throw new Error('select a port');
-    await window.groundApi.connect({ path, baudRate: 115200 });
+    await window.groundApi.connect(path);
   } catch (error) {
     showToast(`CONNECT ERROR / ${error.message}`);
   }
@@ -394,6 +434,9 @@ function toggleSynthetic() {
 store.addEventListener('update', redraw);
 store.addEventListener('event', () => { if (consoleTab === 'events') renderEvents(); });
 store.addEventListener('liftoff', (event) => triggerLiftoff(event.detail));
+store.addEventListener('app-decode-mismatch', (event) => {
+  if (window.groundApi) window.groundApi.recordAppDecodeMismatch(event.detail);
+});
 
 for (const button of document.querySelectorAll('#inspector-tabs button')) {
   button.addEventListener('click', () => {
@@ -437,19 +480,25 @@ document.addEventListener('keydown', (event) => {
 });
 
 if (window.groundApi) {
-  window.groundApi.onLine((record) => store.ingestLineRecord(record));
-  window.groundApi.onLogStatus((status) => updateLogStatus(status));
-  window.groundApi.onConnection((status) => {
-    connected = Boolean(status.connected);
+  window.groundApi.onSerialLine((record) => store.ingestLineRecord(record));
+  window.groundApi.onSessionStatus((status) => updateLogStatus(status));
+  window.groundApi.onConnectionStatus((status) => {
+    connected = status.state === 'connected';
     store.setConnection(status);
-    document.querySelector('#connect-port').textContent = connected ? 'DISCONNECT' : 'CONNECT';
+    const connectButton = document.querySelector('#connect-port');
+    connectButton.textContent = status.state === 'connecting' ? 'CONNECTING' : connected ? 'DISCONNECT' : 'CONNECT';
+    connectButton.disabled = status.state === 'connecting';
   });
+  window.groundApi.onError((error) => store.addEvent(`SERIAL ERROR / ${error.code ?? error.message}`, 'error'));
   const session = await window.groundApi.getSession();
   store.setSessionOrigin(session.createdAt);
-  for (const record of session.bufferedLines ?? []) store.ingestLineRecord(record);
+  store.beginReplay();
+  for (const record of session.replay ?? []) store.ingestSessionEvent(record);
+  store.endReplay();
+  store.setConnection(session.connection ?? { state: 'disconnected' });
   window.groundApi.rendererReady();
   window.addEventListener('beforeunload', () => window.groundApi.rendererReload());
-  updateLogStatus(session.directory ? (session.logStatus ?? { healthy: true }) : { healthy: false, error: 'session unavailable' });
+  updateLogStatus(session.directory ? (session.status ?? { healthy: true }) : { healthy: false, error: 'session unavailable' });
 } else {
   toggleSynthetic();
 }

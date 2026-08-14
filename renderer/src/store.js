@@ -1,9 +1,22 @@
-import { parseUsbLine, hexToBytes, bytesToHex } from '../../shared/usb-line.js';
-import { decodeApplicationPacket, fieldMap, PacketHeader } from '../../shared/protocol.js';
+import {
+  decodeApplicationPacket,
+  fieldMap,
+  PacketHeader,
+  packetNames,
+} from '../../shared/protocol.js';
+import { OutboundCommandTracker } from '../../shared/command-lifecycle.js';
 
 const MAX_RAW_PACKETS = 1000;
 const MAX_EVENTS = 500;
 const MAX_ATTITUDE_SAMPLES = 8;
+const MAX_PACKET_MONITOR = 1000;
+const MAX_LATENCY_SAMPLES = 2048;
+const MAX_HISTORY_SAMPLES = 1000;
+
+function pushBounded(target, value, limit = MAX_HISTORY_SAMPLES) {
+  target.push(value);
+  if (target.length > limit) target.shift();
+}
 
 function numericField(map, key) {
   const item = map[key];
@@ -42,6 +55,21 @@ export class TelemetryStore extends EventTarget {
     this.invalidPackets = 0;
     this.totalPackets = 0;
     this.latestRecord = null;
+    this.packetMonitor = [];
+    this.parserErrors = 0;
+    this.appDecodeMismatches = 0;
+    this.latestTimeRequestId = null;
+    this.commandTracker = new OutboundCommandTracker(64);
+    this.storeLatenciesMs = [];
+    this.paintLatenciesMs = [];
+    this.pendingPaintReceivedAtMs = null;
+    this.lastRxSequence = null;
+    this.sequenceGaps = 0;
+    this.duplicateSequences = 0;
+    this.seenStreamIds = new Set();
+    this.streamIdOrder = [];
+    this.replaying = false;
+    this.replayDirty = false;
   }
 
   setSessionOrigin(value) {
@@ -50,7 +78,22 @@ export class TelemetryStore extends EventTarget {
   }
 
   notify(type = 'update', detail = null) {
+    if (this.replaying) {
+      this.replayDirty = true;
+      return;
+    }
     this.dispatchEvent(new CustomEvent(type, { detail }));
+  }
+
+  beginReplay() {
+    this.replaying = true;
+    this.replayDirty = false;
+  }
+
+  endReplay() {
+    this.replaying = false;
+    if (this.replayDirty) this.notify();
+    this.replayDirty = false;
   }
 
   addEvent(label, level = 'info', detail = {}) {
@@ -67,80 +110,151 @@ export class TelemetryStore extends EventTarget {
   }
 
   setConnection(connection) {
-    this.connection = { ...this.connection, ...connection };
-    this.addEvent(connection.connected ? `USB CONNECTED / ${connection.path ?? ''}` : `USB DISCONNECTED / ${connection.reason ?? ''}`,
-      connection.connected ? 'ok' : 'warn');
+    const connected = connection.state === 'connected' || connection.connected === true;
+    this.connection = { ...this.connection, ...connection, connected };
+    if (!connected && connection.state !== 'connecting') {
+      this.clearCurrentTelemetry();
+    }
+    this.addEvent(connected ? `USB CONNECTED / ${connection.path ?? ''}` : `USB ${String(connection.state ?? 'DISCONNECTED').toUpperCase()} / ${connection.reason ?? connection.error ?? ''}`,
+      connected ? 'ok' : 'warn');
     this.notify();
   }
 
-  ingestLineRecord(record) {
-    const parsed = record?.parsed ?? parseUsbLine(record?.raw_line ?? record?.rawLine ?? '', new Date(record?.host_time_utc ?? Date.now()));
-    if (!parsed) return;
-    this.latestRecord = record;
+  clearCurrentTelemetry() {
+    this.state = 'UNKNOWN';
+    this.latestByPacket.clear();
+    this.latestValues.clear();
+    this.latestFieldByKey.clear();
+    this.lastPeriodicRxHostMs = null;
+    this.lastAnyRxHostMs = null;
+    this.lastIntervalMs = null;
+    this.estimatedMissed = 0;
+    this.rssiDbm = null;
+    this.latestTimeRequestId = null;
+    this.lastRxSequence = null;
+  }
 
-    if (parsed.kind !== 'machine') {
-      if (parsed.kind === 'console' && parsed.text) this.addEvent(`CONSOLE / ${parsed.text}`, 'debug');
-      return;
+  addPacketMonitor(entry) {
+    this.packetMonitor.push(entry);
+    if (this.packetMonitor.length > MAX_PACKET_MONITOR) this.packetMonitor.shift();
+  }
+
+  ingestLineRecord(input) {
+    if (Number.isSafeInteger(input?.streamId)) {
+      if (this.seenStreamIds.has(input.streamId)) return;
+      this.seenStreamIds.add(input.streamId);
+      this.streamIdOrder.push(input.streamId);
+      if (this.streamIdOrder.length > 4096) {
+        this.seenStreamIds.delete(this.streamIdOrder.shift());
+      }
+    }
+    const replay = input?.type === 'serial_line';
+    const classification = input?.classification;
+    if (!classification) return;
+    const hostMs = Number(replay ? Date.parse(input.pcUtc) : input.hostUnixMs);
+    const receivedAtMs = Number.isFinite(hostMs) ? hostMs : Date.now();
+    this.latestRecord = input;
+    if (!replay) {
+      const storeLatency = Math.max(0, Date.now() - receivedAtMs);
+      this.storeLatenciesMs.push(storeLatency);
+      if (this.storeLatenciesMs.length > MAX_LATENCY_SAMPLES) this.storeLatenciesMs.shift();
+      this.pendingPaintReceivedAtMs = receivedAtMs;
     }
 
-    if (parsed.recordType === 'RX') {
-      this.ingestRx(parsed, record);
+    if (classification.kind === 'pretty' || classification.kind === 'unclassified') {
+      this.addPacketMonitor({ type: classification.kind, rawLine: classification.rawLine, hostMs: receivedAtMs });
+      if (classification.kind === 'unclassified') {
+        this.addEvent(`UNCLASSIFIED / ${classification.rawLine}`, 'debug');
+      }
+      this.notify();
       return;
     }
-    if (parsed.recordType === 'FRAG') {
-      this.addEvent(`SERIAL FRAGMENT / ${parsed.fields.reason ?? 'UNKNOWN'}`, 'warn', { raw: parsed.fields.raw });
+    if (classification.kind === 'parser-error') {
+      this.parserErrors += 1;
+      this.addPacketMonitor({ type: 'parser-error', ...classification, hostMs: receivedAtMs });
+      this.addEvent(`USB PARSER ERROR / ${classification.error.code}`, 'error');
+      this.notify();
       return;
     }
-    if (parsed.recordType === 'TX') {
-      this.addEvent(`UPLINK ${parsed.fields.ok === 1 ? 'SENT' : 'FAILED'} / command=${parsed.fields.command ?? 'NA'}`,
-        parsed.fields.ok === 1 ? 'ok' : 'error');
-      return;
-    }
-    if (parsed.recordType === 'SYS') {
-      this.addEvent(`GROUND BOARD / ${parsed.fields.event ?? parsed.rawLine}`, 'info');
+    if (classification.kind !== 'record') return;
+    const record = classification.record;
+    const monitorEntry = { type: record.type, record, rawLine: classification.rawLine, hostMs: receivedAtMs };
+    this.addPacketMonitor(monitorEntry);
+    if (record.type === 'RX') this.ingestRx(record, receivedAtMs, monitorEntry);
+    else if (record.type === 'TX') this.ingestTx(record, receivedAtMs);
+    else if (record.type === 'FRAG') {
+      this.addEvent(`SERIAL FRAGMENT / ${record.reason}`, 'warn', { raw: record.rawHex });
+      this.notify();
+    } else if (record.type === 'SYS') {
+      if (record.event === 'BOOT') this.clearCurrentTelemetry();
+      if (record.event === 'TRANSACTION_RELEASE') {
+        const outcome = this.commandTracker.applyTransactionRelease(record, receivedAtMs);
+        if (!outcome.matched) this.addEvent(`UNMATCHED RELEASE / id=${record.id}`, 'warn');
+      }
+      this.addEvent(`GROUND BOARD / ${record.event}`, record.event === 'TASK_INIT_FAILED' ? 'error' : 'info');
+      this.notify();
     }
   }
 
-  ingestRx(parsed, record = {}) {
-    const fields = parsed.fields;
-    const rawHex = typeof fields.raw === 'string' ? fields.raw : '';
-    let bytes = null;
-    let decoded = null;
-    let error = null;
-    try {
-      bytes = hexToBytes(rawHex);
-      decoded = decodeApplicationPacket(bytes);
-    } catch (caught) {
-      error = caught instanceof Error ? caught.message : String(caught);
-    }
+  ingestTx(record, hostMs) {
+    const outcome = this.commandTracker.applyTx(record, hostMs);
+    this.addEvent(`UPLINK ${record.ok ? 'SENT' : 'FAILED'} / id=${record.id} command=0x${record.command.toString(16).padStart(2, '0').toUpperCase()}`,
+      record.ok ? 'ok' : 'error');
+    if (!outcome.matched) this.addEvent(`UNMATCHED @TX / id=${record.id}`, 'warn');
+    this.notify();
+  }
 
-    const firmwareValid = fields.valid === undefined ? true : fields.valid === 1;
-    const valid = Boolean(decoded && firmwareValid && decoded.lengthValid && decoded.checksumValid);
-    const hostMs = Number(record.host_unix_ms ?? parsed.hostTime?.getTime?.() ?? Date.now());
+  ingestRx(record, hostMs = Date.now(), monitorEntry = null) {
+    const bytes = Uint8Array.from(record.rawBytes);
+    let decoded = null;
+    let appMismatch = null;
+    if (record.valid) {
+      try {
+        decoded = decodeApplicationPacket(bytes);
+        if (!decoded.lengthValid || !decoded.checksumValid) appMismatch = 'APP_DECODE_MISMATCH';
+      } catch {
+        appMismatch = 'APP_DECODE_MISMATCH';
+      }
+    }
+    const valid = Boolean(record.valid && decoded && appMismatch === null);
     const metadata = {
       hostMs,
       hostTime: new Date(hostMs),
-      boardMs: typeof fields.board_ms === 'number' ? fields.board_ms : null,
-      sequence: typeof fields.seq === 'number' ? fields.seq : null,
-      intervalMs: typeof fields.dt_ms === 'number' ? fields.dt_ms : null,
-      rssiDbm: typeof fields.rssi_dbm === 'number' ? fields.rssi_dbm : null,
-      rssiRaw: typeof fields.rssi_raw === 'number' ? fields.rssi_raw : null,
-      rawHex: rawHex || (bytes ? bytesToHex(bytes) : ''),
-      firmwareValid,
+      boardMs: record.boardMs,
+      sequence: record.seq,
+      intervalMs: record.dtMs,
+      rssiDbm: record.rssiDbm,
+      rssiRaw: record.rssiRaw,
+      rawHex: record.rawHex,
+      firmwareValid: record.valid,
       valid,
-      error: error ?? fields.error ?? (decoded && !decoded.checksumValid ? 'XOR_MISMATCH' : null),
+      error: appMismatch ?? record.error,
     };
 
     this.totalPackets += 1;
     this.lastAnyRxHostMs = hostMs;
-    if (metadata.rssiDbm !== null) this.rssiDbm = metadata.rssiDbm;
+    if (this.lastRxSequence !== null) {
+      const advance = (record.seq - this.lastRxSequence) >>> 0;
+      if (advance === 0) this.duplicateSequences += 1;
+      else if (advance > 1) this.sequenceGaps += advance - 1;
+    }
+    this.lastRxSequence = record.seq;
     if (!valid) this.invalidPackets += 1;
+    if (appMismatch !== null) {
+      this.appDecodeMismatches += 1;
+      if (monitorEntry) monitorEntry.appDecodeMismatch = true;
+      this.notify('app-decode-mismatch', {
+        seq: record.seq,
+        header: record.header,
+        error: 'APP_DECODE_MISMATCH',
+      });
+    }
 
     const packetRecord = {
       metadata,
       decoded,
-      line: parsed.rawLine,
-      packetName: decoded?.packetName ?? `Unknown_0x${bytes?.[0]?.toString(16).padStart(2, '0') ?? '??'}`,
+      line: record.rawLine,
+      packetName: decoded?.packetName ?? packetNames[record.header] ?? `Unknown_0x${record.header.toString(16).padStart(2, '0')}`,
     };
     this.rawPackets.push(packetRecord);
     if (this.rawPackets.length > MAX_RAW_PACKETS) this.rawPackets.shift();
@@ -151,7 +265,66 @@ export class TelemetryStore extends EventTarget {
       return;
     }
 
+    this.rssiDbm = metadata.rssiDbm;
+
+    if (decoded.header === PacketHeader.GROUND_TIME_REQUEST) {
+      this.latestTimeRequestId = fieldMap(decoded).requestId?.raw ?? null;
+    }
+    if (decoded.header === PacketHeader.COMMAND_RESULT) {
+      const fields = fieldMap(decoded);
+      const outcome = this.commandTracker.applyCommandResult({
+        transactionId: fields.transactionId.raw,
+        command: fields.command.raw,
+        phase: fields.phase.raw,
+        reason: fields.reason.raw,
+        detail: fields.detail.raw,
+      }, hostMs);
+      if (!outcome.matched) this.addEvent(`UNMATCHED B0 / id=${fields.transactionId.raw}`, 'warn');
+      else if (outcome.duplicate) this.addEvent(`DUPLICATE B0 / id=${fields.transactionId.raw}`, 'warn');
+      else if (outcome.late) this.addEvent(`LATE B0 / id=${fields.transactionId.raw}`, 'warn');
+    }
     this.ingestDecoded(decoded, metadata);
+  }
+
+  queueOutboundCommand(text, atMs = Date.now()) {
+    return this.commandTracker.queue(text, atMs);
+  }
+
+  markCommandUsbWritten(localId, transportLocalId, atMs = Date.now()) {
+    const entry = this.commandTracker.adoptLocalId(localId, transportLocalId);
+    return entry ? this.commandTracker.markUsbWritten(transportLocalId, atMs) : null;
+  }
+
+  markCommandUsbWriteFailed(localId, error, atMs = Date.now()) {
+    return this.commandTracker.markUsbWriteFailed(localId, error, atMs);
+  }
+
+  markPaint(atMs = Date.now()) {
+    if (this.pendingPaintReceivedAtMs === null) return null;
+    const receivedAtMs = this.pendingPaintReceivedAtMs;
+    const paintLatencyMs = Math.max(0, atMs - receivedAtMs);
+    this.paintLatenciesMs.push(paintLatencyMs);
+    if (this.paintLatenciesMs.length > MAX_LATENCY_SAMPLES) this.paintLatenciesMs.shift();
+    this.pendingPaintReceivedAtMs = null;
+    return {
+      receivedAtMs,
+      storeLatencyMs: this.storeLatenciesMs.at(-1) ?? null,
+      paintLatencyMs,
+    };
+  }
+
+  ingestSessionEvent(event) {
+    if (event?.type === 'serial_line') {
+      this.ingestLineRecord(event);
+      return;
+    }
+    if (event?.type !== 'command' || !Number.isInteger(event.localId)) return;
+    let entry = this.commandTracker.findLocal(event.localId);
+    if (!entry) entry = this.commandTracker.queue(event.command, Date.parse(event.pcUtc), event.localId);
+    if (event.state === 'USB_WRITTEN') this.commandTracker.markUsbWritten(entry.localId, Date.parse(event.pcUtc));
+    else if (event.state === 'USB_WRITE_FAILED') {
+      this.commandTracker.markUsbWriteFailed(entry.localId, event.error, Date.parse(event.pcUtc));
+    }
   }
 
   ingestDecoded(decoded, metadata = {}) {
@@ -196,7 +369,7 @@ export class TelemetryStore extends EventTarget {
     const height = numericField(map, 'height');
 
     if (flightElapsed !== null) {
-      this.flightHistory.push({
+      pushBounded(this.flightHistory, {
         t: flightElapsed, hostMs, roll, rollRate, tilt, tiltDirection, finAngle, finRate,
         requestedTorque, pressure, temperature, airspeed, east, north, height,
       });
@@ -204,14 +377,14 @@ export class TelemetryStore extends EventTarget {
 
     const systemPoint = {
       t: sessionSec, hostMs, logicVoltage, motorVoltage, pressure, temperature,
-      rssi: metadata.rssiDbm ?? this.rssiDbm,
+      rssi: metadata.rssiDbm,
     };
     if ([logicVoltage, motorVoltage, pressure, temperature, systemPoint.rssi].some(Number.isFinite)) {
-      this.systemHistory.push(systemPoint);
+      pushBounded(this.systemHistory, systemPoint);
     }
 
     if (east !== null && north !== null) {
-      this.positionHistory.push({ t: flightElapsed ?? sessionSec, hostMs, east, north, height, valid: true });
+      pushBounded(this.positionHistory, { t: flightElapsed ?? sessionSec, hostMs, east, north, height, valid: true });
     }
 
     if (roll !== null && tilt !== null && tiltDirection !== null) {

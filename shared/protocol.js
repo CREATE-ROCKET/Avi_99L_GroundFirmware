@@ -290,11 +290,6 @@ function decodeCommandReceive(bytes) {
   fields.push(field('commandStatusRaw', 'CommandReceive status raw', 'Status', status, `0x${status.toString(16).padStart(6,'0').toUpperCase()}`));
   addStatusBits(fields, status, commandStatusNames, 'Command status');
 
-  const modes = reader.read(8);
-  const finMode = modes & 0x0F;
-  const paraMode = (modes >> 4) & 0x0F;
-  fields.push(field('finMode', 'Fin mode', 'Modes', finMode, finModeNames[finMode] ?? 'Unknown'));
-  fields.push(field('paraMode', 'Parachute mode', 'Modes', paraMode, paraModeNames[paraMode] ?? 'Unknown'));
   const profile = reader.read(8);
   fields.push(field('motorProfile', 'Motor profile ID', 'Configuration', profile, profile));
 
@@ -304,6 +299,12 @@ function decodeCommandReceive(bytes) {
     semantic(tiltRaw,120,0.75,0,{121:'UNAVAILABLE',122:'NOT_INITIALIZED',123:'STALE',124:'ESTIMATOR_INVALID',125:'RESET_INVALIDATED',126:'OUT_OF_RANGE',127:'UNKNOWN'}),'deg');
   addSemantic(fields, 'tiltDirection', 'Tilt direction true', 'Attitude', tiltDirRaw,
     semantic(tiltDirRaw,359,1,0,{}),'deg');
+
+  const modes = reader.read(8);
+  const finMode = modes & 0x0F;
+  const paraMode = (modes >> 4) & 0x0F;
+  fields.push(field('finMode', 'Fin mode', 'Modes', finMode, finModeNames[finMode] ?? 'Unknown'));
+  fields.push(field('paraMode', 'Parachute mode', 'Modes', paraMode, paraModeNames[paraMode] ?? 'Unknown'));
 
   const finRaw = reader.read(8);
   const paraRaw = reader.read(8);

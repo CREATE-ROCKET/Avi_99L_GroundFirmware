@@ -151,6 +151,18 @@ npm install
 npm run dev
 ```
 
+NixOS/Linuxではrepository rootで次を使用できます。
+
+```bash
+nix develop path:.
+bash scripts/nix-deps.sh
+npm test
+npm run build:renderer
+npm run dev
+```
+
+未commitの`flake.nix`も確実に入力へ含めるため、現在のworking treeでは`path:.`を指定します。flakeをcommitした後は通常の`nix develop`でも起動できます。shellはNode.js 22とElectronを固定し、NixOS上ではnpm同梱binaryの代わりにNix packageのElectronを使用します。`nix-deps.sh`は実行bitを保持しないfilesystem上でもnpm package binaryを使えるよう、lockfile hash別のdependencyをuser cacheへ置き、repositoryのignored `node_modules`からsymlinkします。既存の異なる`node_modules`は削除しません。
+
 2回目以降とCIでは、commit済みlockfileを使って`npm ci`を実行してください。
 
 Linuxでserial portへアクセスできない場合は、対象distributionの`dialout`等のgroupまたはudev ruleを設定してください。アプリはportを自動選択せず、ユーザーが選択します。
@@ -180,6 +192,33 @@ npm test
 ```
 
 既知9 packet typeについて、length、XOR、decoder、USB `@RX` parsingを確認します。
+
+## Headless serial CLI
+
+GUIを開かずにport確認、timestamp付きcapture、console command送信を行えます。parserはGUIと同じ`shared/usb-line.js`を使用し、出力はJSON Linesです。同一portをGUIや別monitorと同時に開かないでください。
+
+```bash
+npm run cli -- --help
+npm run cli -- --list
+npm run cli -- --port /dev/ttyUSB0 --duration-ms 10000 --send "help"
+```
+
+CH340のDTR/RTS状態によりESP32がdownload bootへ入っている場合は、同一processでportを保持したままrun modeへresetできます。
+
+```sh
+npm run cli -- --port /dev/ttyUSB0 --reset-to-run --duration-ms 10000 --send "help"
+```
+
+`--reset-to-run`はDTRをdeassertしたままRTSを100 ms pulseし、送信前にESP32を通常bootへ戻します。通常のread-only captureでは指定しないため、CLI接続だけで基板を自動resetしません。
+
+`--send`はport open直後の取こぼしを避けるため既定で250 ms待ってから、入力文字列をそのままGround Boardへ送ります。必要なら`--settle-ms`で変更できます。actuator commandの安全確認はoperator側で行います。接続中はstdinからもcommandを送信できます。
+
+## Validation (2026-08-14)
+
+- **PASS**: `nix develop path:.`でNode.js 22.23.2 / npm 10.9.8 / Electron 41.10.3を起動し、protocol smoke testとrenderer buildを完走しました。
+- **PASS**: Nix shell内でGUIを起動し、3つの実port列挙、Synthetic mode、CommandReceive表示、500 ms interval、5 packet / invalid 0をDevTools protocolで確認しました。
+- **PASS**: headless CLIから`/dev/ttyUSB0`を115200 bpsで開き、`help`送信後約11 msで`commands:`応答を受信しました。
+- **PARTIAL / SPEC_GAP**: current Ground Board firmwareはUSB line protocol v1の`@RX` recordを未実装です。CLIはpretty-printを`kind=console`としてtimestamp付きで欠落なく保持しますが、application packetの構造化decodeは`@RX`実装後に有効になります。
 
 ## Synthetic mode
 

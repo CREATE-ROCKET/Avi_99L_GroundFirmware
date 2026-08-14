@@ -24,6 +24,8 @@ Renderer
 
 Renderer reloadではMain processとUSB/session loggingが継続する。
 
+自動試験では`ground-cli.mjs`が同じUSB line parserを再利用し、Electronを介さずSerialPortのRX/TXをJSON Linesへ記録する。GUIとCLIは同一portを同時に所有しない。
+
 ## Production hardening candidate
 
 Serial rateやpretty-print量が増えてMain processの同期`fsync`が問題になる場合は、次のutility processへ移す。

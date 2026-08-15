@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GroundSerialService } from './ground-serial-service.mjs';
-import { SessionWriter } from './session-writer.mjs';
+import { SessionWriter } from './session-writer-v2.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);

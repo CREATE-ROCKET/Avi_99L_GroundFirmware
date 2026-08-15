@@ -24,7 +24,6 @@ export function createScreenRenderer({ store, devMode = false, loggerStatus = ()
   const statusRow = (label, value, tone = 'ok') => `<div class="status-row"><span>${escapeHtml(label)}</span><i class="dot ${tone}"></i><strong class="${tone}">${escapeHtml(value)}</strong></div>`;
   const commandBit = (bit) => fieldBool(`Command status.bit${bit}`);
   const flightBit = (bit) => fieldBool(`Flight status.bit${bit}`);
-  const descentBit = (bit) => fieldBool(`Descent status.bit${bit}`);
   const eventList = (limit = 6) => `<div class="event-list">${[...store.events].reverse().slice(0, limit).map((e) => `<div><time>${e.sessionSec.toFixed(3)}</time><span>${escapeHtml(e.label)}</span></div>`).join('')}</div>`;
   const action = (name, label, { kind = '', disabled = false } = {}) => `<button class="button ${kind}" data-action="${name}" ${disabled ? 'disabled' : ''}>${escapeHtml(label)}</button>`;
   const renderReadiness = () => {
@@ -50,9 +49,9 @@ export function createScreenRenderer({ store, devMode = false, loggerStatus = ()
       if (name === 'SSC') return fieldNum('airspeed') !== null ? { text: 'OK', tone: 'ok' } : { text: 'N/R', tone: 'muted' };
     }
     if (store.state === 'Descent') {
-      if (name === 'LPS') return descentBit(4) ? { text: 'OFF', tone: 'muted' } : fieldNum('pressure') !== null ? { text: 'OK', tone: 'ok' } : { text: 'N/R', tone: 'muted' };
-      if (name === 'STS') return [8, 9, 10, 11, 12].some((b) => descentBit(b)) ? { text: 'FAULT', tone: 'error' } : { text: 'OK', tone: 'ok' };
-      if (name === 'SSC') return descentBit(4) ? { text: 'OFF', tone: 'muted' } : { text: 'N/R', tone: 'muted' };
+      // 最新A4はLPS/STS/SSC health bitを持たない。観測できないhealthをOKと断定しない。
+      if (name === 'LPS') return fieldNum('pressure') !== null ? { text: 'DATA', tone: 'ok' } : { text: 'N/R', tone: 'muted' };
+      return { text: 'N/R', tone: 'muted' };
     }
     return { text: 'N/R', tone: 'muted' };
   }
@@ -146,9 +145,12 @@ export function createScreenRenderer({ store, devMode = false, loggerStatus = ()
   }
 
   function descent() {
-    const pState = field('parachuteState')?.value ?? 'UNKNOWN';
-    const steps = [['DEPLOY CONDITION', descentBit(0) || descentBit(1)], ['OPEN COMMAND', !['Holding / not opened', 'UNKNOWN'].includes(pState)], ['SERVO MOVING', ['Opening or retrying', 'Open confirmed'].includes(pState)], ['OPEN POSITION', pState === 'Open confirmed'], ['DEPLOY SHOCK', descentBit(7)], ['POWER CUTOFF', descentBit(4)]];
-    return `<div class="grid descent-view"><section class="panel descent-map"><div class="panel-title"><b>01</b> RECOVERY POSITION / MAP</div><div id="map-host" class="visual-host"></div><div class="metric-grid">${metric('EAST', fieldText('east'))}${metric('NORTH', fieldText('north'))}${metric('HEIGHT', fieldText('height'))}${metric('PARA', fieldText('paraAngle'))}</div></section><section class="panel deployment"><div class="panel-title"><b>02</b> PARACHUTE / DEPLOYMENT</div><div class="state-title amber">${escapeHtml(String(pState).toUpperCase())}</div>${steps.map(([a, v], i) => statusRow(`${i + 1}  ${a}`, v ? 'PASS' : 'WAIT', v ? 'ok' : 'warn')).join('')}<div class="action-row">${action('enterRecovery', 'ENTER RECOVERY', { kind: 'dark', disabled: !descentBit(4) })}</div></section><section class="panel descent-chart"><div class="panel-title"><b>03</b> DESCENT HISTORY</div><div id="descent-chart-host" class="flight-chart-host"></div></section><section class="panel descent-system"><div class="panel-title"><b>04</b> SYSTEM</div>${statusRow('POWER CUTOFF', descentBit(4) ? 'DONE' : 'WAIT', descentBit(4) ? 'ok' : 'warn')}${statusRow('STS OVERLOAD', descentBit(8) ? 'FAULT' : 'NO', descentBit(8) ? 'error' : 'ok')}${statusRow('STS OVERCURRENT', descentBit(9) ? 'FAULT' : 'NO', descentBit(9) ? 'error' : 'ok')}${statusRow('STS OVERTEMP', descentBit(10) ? 'FAULT' : 'NO', descentBit(10) ? 'error' : 'ok')}${eventList(4)}</section></div>`;
+    const failure = field('parachuteDeploymentFailure');
+    const failureText = failure?.status === 'VALID' ? String(failure.value) : fieldText('parachuteDeploymentFailure', 'UNKNOWN');
+    const failureActive = failure?.status === 'VALID' && failure.raw !== 0;
+    const persistenceCorrupt = fieldBool('parachutePersistenceCorrupt');
+    const reservedStatus = field('descentReservedStatus');
+    return `<div class="grid descent-view"><section class="panel descent-map"><div class="panel-title"><b>01</b> RECOVERY POSITION / MAP</div><div id="map-host" class="visual-host"></div><div class="metric-grid">${metric('EAST', fieldText('east'))}${metric('NORTH', fieldText('north'))}${metric('HEIGHT', fieldText('height'))}${metric('PARA', fieldText('paraAngle'))}</div></section><section class="panel deployment"><div class="panel-title"><b>02</b> PARACHUTE / DEPLOYMENT</div><div class="state-title ${failureActive ? 'red' : 'amber'}">${failureActive ? 'DEPLOYMENT FAILURE' : 'NO FAILURE LATCHED'}</div>${statusRow('FAILURE CODE', failureText, failureActive ? 'error' : 'ok')}${statusRow('PERSISTENCE', persistenceCorrupt === true ? 'CORRUPT' : persistenceCorrupt === false ? 'OK' : 'N/R', persistenceCorrupt === true ? 'error' : persistenceCorrupt === false ? 'ok' : 'muted')}${statusRow('RESERVED STATUS', reservedStatus?.raw ? `NONZERO 0x${reservedStatus.raw.toString(16).toUpperCase()}` : 'ZERO', reservedStatus?.raw ? 'error' : 'ok')}<div class="metric-grid small">${metric('PARA ANGLE', fieldText('paraAngle'))}${metric('DESCENT TIME', fieldText('descentElapsed'))}${metric('PRESSURE', fieldText('pressure'))}</div><div class="action-row">${action('enterRecovery', 'REQUEST RECOVERY', { kind: 'dark' })}</div><small>Recovery entry is Mission-owned. The GUI sends MissionGeneric EnterRecovery; Mission validates deployment-power and state preconditions.</small></section><section class="panel descent-chart"><div class="panel-title"><b>03</b> DESCENT HISTORY</div><div id="descent-chart-host" class="flight-chart-host"></div></section><section class="panel descent-system"><div class="panel-title"><b>04</b> SYSTEM</div>${statusRow('LPS DATA', fieldNum('pressure') !== null ? 'RECEIVED' : 'N/R', fieldNum('pressure') !== null ? 'ok' : 'muted')}${statusRow('STS HEALTH', 'NOT TELEMETRIED IN CURRENT A4', 'muted')}${statusRow('POWER CUTOFF', 'NOT TELEMETRIED IN CURRENT A4', 'muted')}${eventList(4)}</section></div>`;
   }
 
   function recovery() {

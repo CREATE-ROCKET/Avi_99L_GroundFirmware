@@ -191,7 +191,6 @@ function bindUi() {
     renderAll(true);
   }));
   document.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => void dispatchAction(button.dataset.action)));
-  document.querySelectorAll('[data-data-tab]').forEach((button) => button.addEventListener('click', () => { dataTab = button.dataset.dataTab; renderDrawers(); bindDrawerUi(); }));
   document.querySelectorAll('[data-ui="data-open"]').forEach((button) => button.addEventListener('click', () => { dataOpen = true; renderDrawers(); bindDrawerUi(); }));
   document.querySelectorAll('[data-ui="dev-open"]').forEach((button) => button.addEventListener('click', () => { devOpen = true; renderDrawers(); bindDrawerUi(); }));
   document.querySelectorAll('[data-view-reset]').forEach((button) => button.addEventListener('click', () => rocketView.resetObliqueView()));
@@ -228,7 +227,6 @@ function bindDrawerUi() {
 function renderAll(force = false) {
   if (!force && activeInput()) {
     topbar.innerHTML = screens.topbar();
-    for (const chart of charts) chart.draw();
     if (dataOpen || devOpen) { renderDrawers(); bindDrawerUi(); }
     return;
   }
@@ -402,8 +400,9 @@ if (SYNTHETIC_AUTOSTART) toggleSynthetic();
 rocketView.setMode(predictiveMode ? 'predictive' : 'hold');
 await refreshPorts();
 renderAll(true);
+// RX age and other clock-derived topbar values need a timer, but chart redraws are
+// driven by store updates / resize / view changes. Redrawing long histories at
+// 10 Hz while idle wastes CPU and battery without changing any data.
 setInterval(() => {
   topbar.innerHTML = screens.topbar();
-  for (const chart of charts) chart.draw();
-  if (dataOpen || devOpen) { renderDrawers(); bindDrawerUi(); }
-}, 100);
+}, 250);

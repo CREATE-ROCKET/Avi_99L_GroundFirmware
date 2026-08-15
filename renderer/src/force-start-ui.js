@@ -1,3 +1,4 @@
+import './force-start.css';
 import { escapeHtml } from '../../shared/html.js';
 
 export const START_SEQUENCE_COMMAND = 0x01;

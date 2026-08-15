@@ -343,7 +343,12 @@ export class TelemetryStore extends EventTarget {
       this.latestFieldByKey.set(item.key, latestItem);
     }
 
-    if (decoded.missionState) this.state = decoded.missionState;
+    if (decoded.communicationMode === 'MissionLinkFallback') {
+      // A8はMissionStateではない。Vaultどおりcurrent stateをUNKNOWNへ落とす。
+      this.state = 'UNKNOWN';
+    } else if (decoded.missionState) {
+      this.state = decoded.missionState;
+    }
     if (decoded.communicationMode) {
       this.communicationMode = decoded.communicationMode;
     } else if (decoded.header >= PacketHeader.COMMAND_RECEIVE

@@ -16,6 +16,7 @@
     "build:linux": "npm run build:renderer && node scripts/package-desktop.mjs --linux AppImage --x64 --publish never && npm run verify:linux-package",
     "verify:linux-package": "node scripts/verify-linux-package.mjs",
     "cli": "node scripts/ground-cli.mjs",
+    "map:download": "node scripts/download-offline-map.mjs",
     "test": "node tests/run.mjs",
     "test:pty": "node tests/pty-integration.mjs"
   },

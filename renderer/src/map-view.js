@@ -1,3 +1,14 @@
+import {
+  enuToLatLon,
+  latLonToEnu,
+  selectTileZoom,
+  tileRangeForBounds,
+  tileToLatLon,
+} from '../../shared/offline-map.js';
+
+const TILE_CACHE_LIMIT = 128;
+const OFFLINE_TILE_ROOT = 'maps/gsi-seamlessphoto/';
+
 export class LocalMapView {
   constructor(host, store) {
     this.host = host;
@@ -11,6 +22,8 @@ export class LocalMapView {
     this.displayPosition = null;
     this.lastTarget = null;
     this.transitionStart = 0;
+    this.tileRoot = new URL(OFFLINE_TILE_ROOT, document.baseURI);
+    this.tileCache = new Map();
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(host);
     this.resize();
@@ -41,13 +54,13 @@ export class LocalMapView {
     const valid = points.filter((point) => Number.isFinite(point.east) && Number.isFinite(point.north));
     const eastValues = [0, ...valid.map((point) => point.east)];
     const northValues = [0, ...valid.map((point) => point.north)];
-    let minE = Math.min(...eastValues), maxE = Math.max(...eastValues);
-    let minN = Math.min(...northValues), maxN = Math.max(...northValues);
+    const minE = Math.min(...eastValues), maxE = Math.max(...eastValues);
+    const minN = Math.min(...northValues), maxN = Math.max(...northValues);
     const span = Math.max(80, maxE - minE, maxN - minN);
     const centerE = (minE + maxE) / 2;
     const centerN = (minN + maxN) / 2;
-    const mapWidth = width - 52;
-    const mapHeight = height - 52;
+    const mapWidth = Math.max(1, width - 52);
+    const mapHeight = Math.max(1, height - 52);
     const scale = Math.min(mapWidth, mapHeight) / (span * 1.28);
     return {
       scale,
@@ -57,8 +70,79 @@ export class LocalMapView {
         x: width / 2 + (east - centerE) * scale,
         y: height / 2 - (north - centerN) * scale,
       }),
+      fromScreen: (x, y) => ({
+        east: centerE + (x - width / 2) / scale,
+        north: centerN - (y - height / 2) / scale,
+      }),
       span,
     };
+  }
+
+  pruneTileCache() {
+    while (this.tileCache.size > TILE_CACHE_LIMIT) {
+      const oldestKey = this.tileCache.keys().next().value;
+      this.tileCache.delete(oldestKey);
+    }
+  }
+
+  getTileImage(zoom, x, y) {
+    const key = `${zoom}/${x}/${y}`;
+    const cached = this.tileCache.get(key);
+    if (cached) {
+      this.tileCache.delete(key);
+      this.tileCache.set(key, cached);
+      return cached;
+    }
+
+    const image = new Image();
+    const entry = { state: 'loading', image };
+    image.onload = () => { entry.state = 'ready'; };
+    image.onerror = () => { entry.state = 'missing'; };
+    image.src = new URL(`${zoom}/${x}/${y}.jpg`, this.tileRoot).href;
+    this.tileCache.set(key, entry);
+    this.pruneTileCache();
+    return entry;
+  }
+
+  drawOfflineTiles(ctx, transform, width, height) {
+    const zoom = selectTileZoom(transform.scale);
+    const northWestEnu = transform.fromScreen(0, 0);
+    const southEastEnu = transform.fromScreen(width, height);
+    const northWest = enuToLatLon(northWestEnu.east, northWestEnu.north);
+    const southEast = enuToLatLon(southEastEnu.east, southEastEnu.north);
+    const bounds = {
+      north: Math.max(northWest.lat, southEast.lat),
+      south: Math.min(northWest.lat, southEast.lat),
+      west: Math.min(northWest.lon, southEast.lon),
+      east: Math.max(northWest.lon, southEast.lon),
+    };
+    const range = tileRangeForBounds(bounds, zoom);
+    let ready = 0;
+    let missing = 0;
+
+    ctx.save();
+    ctx.globalAlpha = 0.78;
+    for (let x = range.minX; x <= range.maxX; x += 1) {
+      for (let y = range.minY; y <= range.maxY; y += 1) {
+        const entry = this.getTileImage(zoom, x, y);
+        if (entry.state === 'missing') {
+          missing += 1;
+          continue;
+        }
+        if (entry.state !== 'ready') continue;
+
+        const northWestCorner = tileToLatLon(x, y, zoom);
+        const southEastCorner = tileToLatLon(x + 1, y + 1, zoom);
+        const northWestTileEnu = latLonToEnu(northWestCorner.lat, northWestCorner.lon);
+        const southEastTileEnu = latLonToEnu(southEastCorner.lat, southEastCorner.lon);
+        const a = transform.toScreen(northWestTileEnu.east, northWestTileEnu.north);
+        const b = transform.toScreen(southEastTileEnu.east, southEastTileEnu.north);
+        ctx.drawImage(entry.image, a.x, a.y, b.x - a.x, b.y - a.y);
+        ready += 1;
+      }
+    }
+    ctx.restore();
+    return { zoom, requested: range.count, ready, missing };
   }
 
   draw() {
@@ -69,21 +153,24 @@ export class LocalMapView {
     ctx.fillStyle = '#17211f';
     ctx.fillRect(0, 0, width, height);
 
+    const points = this.store.positionHistory;
+    const transform = this.transform(points, width, height);
+    const { toScreen, span } = transform;
+    let tileStatus = null;
+
     if (this.background) {
       ctx.globalAlpha = 0.7;
       ctx.drawImage(this.background, 0, 0, width, height);
       ctx.globalAlpha = 1;
-      ctx.fillStyle = 'rgba(9,18,16,0.26)';
-      ctx.fillRect(0, 0, width, height);
+    } else {
+      tileStatus = this.drawOfflineTiles(ctx, transform, width, height);
     }
-
-    const points = this.store.positionHistory;
-    const transform = this.transform(points, width, height);
-    const { toScreen, span } = transform;
+    ctx.fillStyle = 'rgba(9,18,16,0.26)';
+    ctx.fillRect(0, 0, width, height);
 
     ctx.strokeStyle = 'rgba(185,204,197,0.15)';
     ctx.lineWidth = 1;
-    const gridStep = span <= 200 ? 25 : span <= 500 ? 50 : span <= 1500 ? 200 : 500;
+    const gridStep = span <= 200 ? 25 : span <= 500 ? 50 : span <= 1500 ? 200 : span <= 5000 ? 500 : 1000;
     const firstE = Math.floor((transform.centerE - span) / gridStep) * gridStep;
     const firstN = Math.floor((transform.centerN - span) / gridStep) * gridStep;
     for (let east = firstE; east <= transform.centerE + span; east += gridStep) {
@@ -147,6 +234,11 @@ export class LocalMapView {
     ctx.fillStyle = '#b9c7c2';
     ctx.font = '600 10px Inter, system-ui, sans-serif';
     ctx.fillText('LOCAL ENU / ALL RAW GNSS POINTS', 14, 20);
+    if (tileStatus) {
+      ctx.fillText(`OFFLINE GSI PHOTO / Z${tileStatus.zoom} / ${tileStatus.ready}/${tileStatus.requested}`, 14, height - 28);
+      if (tileStatus.missing > 0) ctx.fillText(`MAP TILE MISSING ${tileStatus.missing}`, 14, height - 14);
+      else ctx.fillText('出典: 国土地理院', 14, height - 14);
+    }
     ctx.fillStyle = '#f2f0ea';
     ctx.fillText('N', width - 23, 21);
     ctx.strokeStyle = '#f2f0ea';
@@ -157,5 +249,6 @@ export class LocalMapView {
   dispose() {
     cancelAnimationFrame(this.frame);
     this.resizeObserver.disconnect();
+    this.tileCache.clear();
   }
 }

@@ -9,4 +9,5 @@ public/maps/*.mbtiles
 public/maps/*.png
 public/maps/*.jpg
 public/maps/*.jpeg
+public/maps/gsi-seamlessphoto/
 !public/maps/README.md

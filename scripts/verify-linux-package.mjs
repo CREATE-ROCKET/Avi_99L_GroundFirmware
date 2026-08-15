@@ -3,6 +3,7 @@
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,47 +20,56 @@ const probe = [
   "SerialPort.list().then((ports) => console.log(JSON.stringify({ ok: true, portCount: ports.length, paths: ports.map((port) => port.path) })), (error) => { console.error(error); process.exitCode = 1 })",
 ].join(';');
 
-if (!fs.existsSync(appImage)) {
-  throw new Error(`AppImage not found: ${appImage}`);
-}
-// electron-builder normally preserves this bit, but the verifier should not depend
-// on the checkout/artifact transport preserving executable permissions.
+if (!fs.existsSync(appImage)) throw new Error(`AppImage not found: ${appImage}`);
 fs.chmodSync(appImage, 0o755);
 
-function hasAppImageRun() {
-  const check = spawnSync('appimage-run', ['--help'], {
-    stdio: 'ignore',
+// Do not depend on FUSE or the Nix-only appimage-run helper in CI. Extract the
+// Type-2 AppImage and invoke the packaged Electron binary directly in Node mode.
+// Calling AppRun with ELECTRON_RUN_AS_NODE is not suitable because AppRun adds
+// Chromium flags such as --no-sandbox, which Node correctly rejects.
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'create-99l-appimage-verify-'));
+try {
+  const extract = spawnSync(appImage, ['--appimage-extract'], {
+    cwd: temp,
     env: process.env,
+    stdio: ['ignore', 'ignore', 'pipe'],
+    encoding: 'utf8',
   });
-  return check.error?.code !== 'ENOENT';
-}
+  if (extract.error) throw extract.error;
+  if (extract.status !== 0) {
+    if (extract.stderr) process.stderr.write(extract.stderr);
+    throw new Error(`AppImage extraction exited with status ${extract.status}`);
+  }
 
-const useAppImageRun = hasAppImageRun();
-const executable = useAppImageRun ? 'appimage-run' : appImage;
-const args = useAppImageRun ? [appImage, '-e', probe] : ['-e', probe];
-const result = spawnSync(executable, args, {
-  cwd: repository,
-  env: {
-    ...process.env,
-    ELECTRON_RUN_AS_NODE: '1',
-    // GitHub Actions runners do not ship the Nix-specific appimage-run helper
-    // and FUSE availability varies. AppImage runtime type 2 supports extracting
-    // to a temporary directory and running directly when this variable is set.
-    ...(useAppImageRun ? {} : { APPIMAGE_EXTRACT_AND_RUN: '1' }),
-  },
-  encoding: 'utf8',
-});
-if (result.error) throw result.error;
-if (result.stdout) process.stdout.write(result.stdout);
-if (result.stderr) process.stderr.write(result.stderr);
-if (result.status !== 0) {
-  throw new Error(`packaged serialport probe exited with status ${result.status}`);
-}
-const output = result.stdout.trim().split('\n').filter(Boolean).at(-1);
-if (!output) throw new Error('packaged serialport probe returned no output');
-const parsed = JSON.parse(output);
-if (parsed.ok !== true || !Number.isSafeInteger(parsed.portCount) || parsed.portCount < 0
-    || !Array.isArray(parsed.paths) || parsed.paths.length !== parsed.portCount
-    || parsed.paths.some((portPath) => typeof portPath !== 'string' || portPath.length === 0)) {
-  throw new Error('packaged serialport probe returned an invalid result');
+  const appDir = path.join(temp, 'squashfs-root');
+  const executable = path.join(appDir, 'create-99l-ground-station');
+  if (!fs.existsSync(executable)) throw new Error(`packaged Electron binary not found: ${executable}`);
+  fs.chmodSync(executable, 0o755);
+
+  const result = spawnSync(executable, ['-e', probe], {
+    cwd: appDir,
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      APPDIR: appDir,
+      LD_LIBRARY_PATH: [path.join(appDir, 'usr', 'lib'), process.env.LD_LIBRARY_PATH]
+        .filter(Boolean).join(path.delimiter),
+    },
+    encoding: 'utf8',
+  });
+  if (result.error) throw result.error;
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.status !== 0) throw new Error(`packaged serialport probe exited with status ${result.status}`);
+
+  const output = result.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
+  if (!output) throw new Error('packaged serialport probe returned no output');
+  const parsed = JSON.parse(output);
+  if (parsed.ok !== true || !Number.isSafeInteger(parsed.portCount) || parsed.portCount < 0
+      || !Array.isArray(parsed.paths) || parsed.paths.length !== parsed.portCount
+      || parsed.paths.some((portPath) => typeof portPath !== 'string' || portPath.length === 0)) {
+    throw new Error('packaged serialport probe returned an invalid result');
+  }
+} finally {
+  fs.rmSync(temp, { recursive: true, force: true });
 }

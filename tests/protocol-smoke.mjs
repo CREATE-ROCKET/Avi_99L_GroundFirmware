@@ -13,7 +13,7 @@ import { parseUsbV1Line, UsbV1ParseErrorCode } from '../shared/usb-v1.js';
 
 export function readGoldenVectors() {
   const content = fs.readFileSync(new URL('../testdata/99l_usb_v1_vectors.txt', import.meta.url), 'utf8');
-  return content.split('\n').filter((line) => line && !line.startsWith('#')).map((line) => {
+  return content.split(/\r?\n/).filter((line) => line && !line.startsWith('#')).map((line) => {
     const [name, delimiter, record] = line.split('|');
     return { name, delimiter, record };
   });
@@ -22,7 +22,7 @@ export function readGoldenVectors() {
 export function readControlRollVectors() {
   const content = fs.readFileSync(
     new URL('../testdata/99l_control_roll_v2_vectors.txt', import.meta.url), 'utf8');
-  return content.split('\n').filter((line) => line && !line.startsWith('#')).map((line) => {
+  return content.split(/\r?\n/).filter((line) => line && !line.startsWith('#')).map((line) => {
     const [name, rawHex, referenceCount, deviationCount, referenceStatus,
       deviationStatus, flagsHex, captureSequence] = line.split('|');
     return {

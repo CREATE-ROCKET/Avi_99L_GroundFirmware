@@ -18,16 +18,45 @@ const probe = [
   "const { SerialPort } = require(path.join(process.resourcesPath, 'app.asar', 'node_modules', 'serialport'))",
   "SerialPort.list().then((ports) => console.log(JSON.stringify({ ok: true, portCount: ports.length, paths: ports.map((port) => port.path) })), (error) => { console.error(error); process.exitCode = 1 })",
 ].join(';');
-const result = spawnSync('appimage-run', [appImage, '-e', probe], {
+
+if (!fs.existsSync(appImage)) {
+  throw new Error(`AppImage not found: ${appImage}`);
+}
+// electron-builder normally preserves this bit, but the verifier should not depend
+// on the checkout/artifact transport preserving executable permissions.
+fs.chmodSync(appImage, 0o755);
+
+function hasAppImageRun() {
+  const check = spawnSync('appimage-run', ['--help'], {
+    stdio: 'ignore',
+    env: process.env,
+  });
+  return check.error?.code !== 'ENOENT';
+}
+
+const useAppImageRun = hasAppImageRun();
+const executable = useAppImageRun ? 'appimage-run' : appImage;
+const args = useAppImageRun ? [appImage, '-e', probe] : ['-e', probe];
+const result = spawnSync(executable, args, {
   cwd: repository,
-  env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+  env: {
+    ...process.env,
+    ELECTRON_RUN_AS_NODE: '1',
+    // GitHub Actions runners do not ship the Nix-specific appimage-run helper
+    // and FUSE availability varies. AppImage runtime type 2 supports extracting
+    // to a temporary directory and running directly when this variable is set.
+    ...(useAppImageRun ? {} : { APPIMAGE_EXTRACT_AND_RUN: '1' }),
+  },
   encoding: 'utf8',
 });
 if (result.error) throw result.error;
 if (result.stdout) process.stdout.write(result.stdout);
 if (result.stderr) process.stderr.write(result.stderr);
-if (result.status !== 0) throw new Error(`packaged serialport probe exited with status ${result.status}`);
-const output = result.stdout.trim().split('\n').at(-1);
+if (result.status !== 0) {
+  throw new Error(`packaged serialport probe exited with status ${result.status}`);
+}
+const output = result.stdout.trim().split('\n').filter(Boolean).at(-1);
+if (!output) throw new Error('packaged serialport probe returned no output');
 const parsed = JSON.parse(output);
 if (parsed.ok !== true || !Number.isSafeInteger(parsed.portCount) || parsed.portCount < 0
     || !Array.isArray(parsed.paths) || parsed.paths.length !== parsed.portCount

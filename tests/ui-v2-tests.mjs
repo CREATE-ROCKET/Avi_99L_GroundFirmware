@@ -42,6 +42,8 @@ export function runUiV2Tests() {
   assert.equal(recoveryStore.estimatedMissed, 0);
 
   assert.deepEqual(encodeSignedTenths(-12.3), [0x85, 0xff]);
+  assert.equal(buildCommand('startSequence'), 'g 0x01');
+  assert.equal(buildCommand('forceStartSequence'), 'g 0x04');
   assert.equal(buildCommand('finMoveRelative', { angle: -12.3 }), 'g 0x13 0x85 0xff');
   assert.equal(buildCommand('paraMoveRelative', { angle: 17.5 }), 'g 0x22 0xaf 0x00');
   assert.equal(buildCommand('setParaOpen', { direction: 'CW' }), 'g 0x23 0x01');
@@ -52,8 +54,14 @@ export function runUiV2Tests() {
   assert.equal(buildCommand('startLogging'), 'local 108');
   assert.equal(buildCommand('wakeMission'), 'local 119');
   assert.equal(isActionAvailable('startSequence', 'Control', 'Normal'), false);
+  assert.equal(isActionAvailable('forceStartSequence', 'CommandReceive', 'Normal'), true);
+  assert.equal(isActionAvailable('forceStartSequence', 'EngineBurn', 'Normal'), false);
+  assert.equal(isActionAvailable('forceStartSequence', 'CommandReceive', 'MissionLinkFallback'), false);
   assert.equal(isActionAvailable('wakeMission', 'Descent', 'Normal'), false);
   assert.equal(isActionAvailable('wakeMission', 'Descent', 'RecoveryBeacon'), true);
   assert.equal(isActionAvailable('dumpMissionSd', 'Control', 'MissionLinkFallback'), true);
   assert.throws(() => buildCommand('paraMoveRelative', { angle: 180 }), /< 180/);
+  assert.throws(() => buildCommand('setParaOpen', { direction: undefined }), /CW or CCW/);
+  assert.throws(() => buildCommand('setParaOpen', { direction: 'cw' }), /CW or CCW/);
+  assert.throws(() => buildCommand('setParaClose', { direction: 'LEFT' }), /CW or CCW/);
 }

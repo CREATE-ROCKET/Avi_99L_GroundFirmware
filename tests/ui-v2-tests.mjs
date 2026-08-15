@@ -57,9 +57,11 @@ export function runUiV2Tests() {
   assert.equal(isActionAvailable('forceStartSequence', 'CommandReceive', 'Normal'), true);
   assert.equal(isActionAvailable('forceStartSequence', 'EngineBurn', 'Normal'), false);
   assert.equal(isActionAvailable('forceStartSequence', 'CommandReceive', 'MissionLinkFallback'), false);
+  assert.equal(isActionAvailable('selectMotorProfile', 'CommandReceive', 'Normal'), false);
   assert.equal(isActionAvailable('wakeMission', 'Descent', 'Normal'), false);
   assert.equal(isActionAvailable('wakeMission', 'Descent', 'RecoveryBeacon'), true);
   assert.equal(isActionAvailable('dumpMissionSd', 'Control', 'MissionLinkFallback'), true);
+  assert.throws(() => buildCommand('selectMotorProfile', { profile: 1 }), /unknown action/);
   assert.throws(() => buildCommand('paraMoveRelative', { angle: 180 }), /< 180/);
   assert.throws(() => buildCommand('setParaOpen', { direction: undefined }), /CW or CCW/);
   assert.throws(() => buildCommand('setParaOpen', { direction: 'cw' }), /CW or CCW/);

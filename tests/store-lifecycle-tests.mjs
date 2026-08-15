@@ -56,8 +56,16 @@ export function runStoreAndLifecycleTests() {
   fallbackStore.ingestLineRecord(envelope(vectorMap.get('RX_A0_VALID')));
   fallbackStore.ingestLineRecord(envelope(
     '@RX usb_v=1 seq=26 board_ms=2000 dt_ms=500 rssi_present=1 rssi_raw=172 rssi_dbm=-84 valid=1 header=0xA8 len=24 error=NONE raw=A8010901132003060A00090008000C00F4FF2800B4BE01B8'));
-  assert.equal(fallbackStore.state, 'CommandReceive');
+  assert.equal(fallbackStore.state, 'UNKNOWN');
+  assert.equal(fallbackStore.lastKnownMissionState, 'Control');
   assert.equal(fallbackStore.communicationMode, 'MissionLinkFallback');
+  assert.equal(fallbackStore.getLatestValue('gnssState').value, 'VALID_FIX');
+  assert.equal(fallbackStore.getLatestValue('east').value, 12);
+  assert.equal(fallbackStore.getLatestValue('north').value, -12);
+  assert.equal(fallbackStore.getLatestValue('height').value, 100);
+  assert.equal(fallbackStore.getLatestValue('logicVoltage').status, 'LAST_KNOWN');
+  assert.equal(fallbackStore.getLatestValue('motorVoltage').status, 'LAST_KNOWN');
+  assert.equal(fallbackStore.getLatestValue('Fallback status.bit6').value, false);
   const priorStatus = store.getLatestValue('commandStatusRaw').raw;
   const invalidWithDifferentRssi = vectorMap.get('RX_A0_BAD_CHECKSUM')
     .replace('rssi_raw=172 rssi_dbm=-84', 'rssi_raw=160 rssi_dbm=-96');

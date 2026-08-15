@@ -92,7 +92,31 @@ export function runStoreAndLifecycleTests() {
 
   assert.equal(escapeHtml('<img/onerror=alert(1)>'), '&lt;img/onerror=alert(1)&gt;');
 
+  const abortedLine = '@SYS usb_v=1 board_ms=5020 event=UPLINK_ABORTED kind=0 id=46 command=0x24 error=BOUNDARY_TIMEOUT';
+  const abortedClassification = classifyUsbLine(abortedLine);
+  assert.equal(abortedClassification.kind, 'record');
+  assert.equal(abortedClassification.record.event, 'UPLINK_ABORTED');
+  assert.equal(abortedClassification.record.error, 'BOUNDARY_TIMEOUT');
+  assert.equal(classifyUsbLine(abortedLine.replace('id=46', 'id=0')).kind, 'parser-error');
+  assert.equal(classifyUsbLine(abortedLine.replace('BOUNDARY_TIMEOUT', 'UNKNOWN')).kind, 'parser-error');
+
+  const abortStore = new TelemetryStore();
+  const abortPending = abortStore.queueOutboundCommand('g 0x24', 9250);
+  abortStore.markCommandUsbWritten(abortPending.localId, abortPending.localId, 9251);
+  abortStore.ingestLineRecord(envelope(abortedLine, 9252));
+  assert.equal(abortPending.state, 'BOARD_TX_FAILED');
+  assert.equal(abortPending.error, 'BOUNDARY_TIMEOUT');
+  assert.equal(abortStore.commandTracker.byTransaction.has(46), false);
+
   const tracker = new OutboundCommandTracker(8);
+  const aborted = tracker.queue('g 0x24', 9300);
+  tracker.markUsbWritten(aborted.localId, 9301);
+  const abortResult = tracker.applyUplinkAborted({
+    kind: 0, id: 46, command: 0x24, error: 'BOUNDARY_TIMEOUT',
+  }, 9302);
+  assert.equal(abortResult.matched, true);
+  assert.equal(aborted.state, 'BOARD_TX_FAILED');
+  assert.equal(tracker.byTransaction.has(46), false);
   const generic = tracker.queue('g 0x13', 0);
   tracker.markUsbWritten(generic.localId, 1);
   assert.equal(tracker.applyTx({ kind: 0, id: 42, command: 0x13, ok: true }, 2).matched, true);

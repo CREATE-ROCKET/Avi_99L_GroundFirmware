@@ -126,6 +126,26 @@ export class OutboundCommandTracker {
     return { matched: true, entry };
   }
 
+  applyUplinkAborted(record, atMs = Date.now()) {
+    const entry = this.commands.find((candidate) => {
+      const description = candidate.description;
+      return (candidate.state === 'USB_WRITTEN' || candidate.state === 'LOCAL_QUEUED')
+        && description?.expectsTx
+        && description.kind === record.kind
+        && description.command === record.command
+        && (description.expectedId === undefined || description.expectedId === record.id);
+    });
+    if (!entry) return { matched: false, record };
+    entry.transactionId = record.id;
+    entry.abortedAtMs = atMs;
+    entry.abortRecord = record;
+    entry.error = record.error;
+    entry.state = 'BOARD_TX_FAILED';
+    entry.finalAtMs = atMs;
+    // UARTへ書いていないため、CommandResult待ちのMapには登録しない。
+    return { matched: true, entry };
+  }
+
   applyCommandResult(result, atMs = Date.now()) {
     const entry = this.byTransaction.get(result.transactionId);
     if (!entry || entry.description.expectedResultCommand !== result.command) {

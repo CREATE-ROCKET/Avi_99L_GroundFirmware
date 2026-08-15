@@ -85,6 +85,11 @@ export function runProtocolTests() {
   assert.equal(parsed.get('RX_A0_BAD_CHECKSUM').valid, false);
   assert.equal(parsed.get('RX_A0_RSSI_ABSENT').rssiRaw, null);
   assert.equal(parsed.get('SYS_UNKNOWN_EXTRA').extras.future, 'VALUE');
+  assert.equal(parsed.get('SYS_UPLINK_ABORTED').event, 'UPLINK_ABORTED');
+  assert.equal(parsed.get('SYS_UPLINK_ABORTED').kind, 0);
+  assert.equal(parsed.get('SYS_UPLINK_ABORTED').id, 43);
+  assert.equal(parsed.get('SYS_UPLINK_ABORTED').command, 0x13);
+  assert.equal(parsed.get('SYS_UPLINK_ABORTED').error, 'BOUNDARY_TIMEOUT');
   assert.equal(parsed.get('RX_WRAP_BEFORE').seq, 0xFFFFFFFF);
   assert.equal(parsed.get('RX_WRAP_AFTER').seq, 0);
 

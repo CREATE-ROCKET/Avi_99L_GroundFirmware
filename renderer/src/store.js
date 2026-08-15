@@ -193,6 +193,16 @@ export class TelemetryStore extends EventTarget {
         const outcome = this.commandTracker.applyTransactionRelease(record, receivedAtMs);
         if (!outcome.matched) this.addEvent(`UNMATCHED RELEASE / id=${record.id}`, 'warn');
       }
+      if (record.event === 'UPLINK_ABORTED') {
+        const outcome = this.commandTracker.applyUplinkAborted(record, receivedAtMs);
+        this.addEvent(
+          `UPLINK ABORTED / id=${record.id} command=0x${record.command.toString(16).padStart(2, '0').toUpperCase()} error=${record.error}`,
+          'error',
+        );
+        if (!outcome.matched) this.addEvent(`UNMATCHED UPLINK_ABORTED / id=${record.id}`, 'warn');
+        this.notify();
+        return;
+      }
       this.addEvent(`GROUND BOARD / ${record.event}`, record.event === 'TASK_INIT_FAILED' ? 'error' : 'info');
       this.notify();
     }

@@ -19,6 +19,7 @@ const RX_ERRORS = new Set([
   'INVALID_FIELD', 'INVALID_ENUM', 'DECODE_ERROR',
 ]);
 const TX_ERRORS = new Set(['NONE', 'AUX_TIMEOUT', 'UART_WRITE', 'UART_FLUSH']);
+const UPLINK_ABORT_ERRORS = new Set(['AUX_TIMEOUT', 'BOUNDARY_TIMEOUT']);
 const FRAGMENT_REASONS = new Set([
   'UNKNOWN_HEADER', 'FRAME_TIMEOUT', 'FRAME_OVERFLOW', 'RESYNC',
 ]);
@@ -258,6 +259,18 @@ export function validateSysRecord(fields) {
     baseKnown.add('ok');
     detail.id = parseUnsigned(required(fields, 'id'), 255, 'id');
     detail.ok = parseBit(required(fields, 'ok'), 'ok');
+  } else if (event === 'UPLINK_ABORTED') {
+    for (const key of ['kind', 'id', 'command', 'error']) baseKnown.add(key);
+    detail.kind = parseUnsigned(required(fields, 'kind'), 4, 'kind');
+    detail.id = parseUnsigned(required(fields, 'id'), 255, 'id');
+    if (detail.id === 0) {
+      invalid(UsbV1ParseErrorCode.INVALID_VALUE, 'id must be nonzero', 'id');
+    }
+    detail.command = parseByteHex(required(fields, 'command'), 'command');
+    detail.error = parseToken(required(fields, 'error'), 'error');
+    if (!UPLINK_ABORT_ERRORS.has(detail.error)) {
+      invalid(UsbV1ParseErrorCode.INVALID_VALUE, 'unknown uplink abort error', 'error');
+    }
   }
   return {
     type: 'SYS', usbVersion, boardMs, event, ...detail,

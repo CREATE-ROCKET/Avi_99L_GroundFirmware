@@ -113,3 +113,37 @@ export function selectTileZoom(scalePxPerMeter, {
   }
   return bestZoom;
 }
+
+export function fitLauncherAndTarget(targetEastM, targetNorthM, widthPx, heightPx, {
+  insetPx = 26,
+  padding = 1.10,
+  minSpanM = 500,
+} = {}) {
+  if (![targetEastM, targetNorthM, widthPx, heightPx, insetPx, padding, minSpanM].every(Number.isFinite)) {
+    throw new RangeError('fit inputs must be finite');
+  }
+  if (widthPx <= 0 || heightPx <= 0 || insetPx < 0 || padding < 1 || minSpanM <= 0) {
+    throw new RangeError('invalid fit geometry');
+  }
+
+  const minE = Math.min(0, targetEastM);
+  const maxE = Math.max(0, targetEastM);
+  const minN = Math.min(0, targetNorthM);
+  const maxN = Math.max(0, targetNorthM);
+  const spanE = Math.max(minSpanM, maxE - minE);
+  const spanN = Math.max(minSpanM, maxN - minN);
+  const usableWidth = Math.max(1, widthPx - insetPx * 2);
+  const usableHeight = Math.max(1, heightPx - insetPx * 2);
+  const scale = Math.min(
+    usableWidth / (spanE * padding),
+    usableHeight / (spanN * padding),
+  );
+
+  return {
+    scale,
+    centerE: (minE + maxE) / 2,
+    centerN: (minN + maxN) / 2,
+    spanE,
+    spanN,
+  };
+}

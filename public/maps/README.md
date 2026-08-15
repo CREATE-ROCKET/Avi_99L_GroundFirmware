@@ -43,7 +43,15 @@ node scripts/download-offline-map.mjs --refresh-unavailable
 serverへ過剰な負荷を与えないよう、default concurrencyは4に制限している。
 
 `vite.config.js`の`publicDir`により、developmentではこのdirectoryをそのまま配信し、`npm run build:renderer`では`dist/renderer/maps/gsi-seamlessphoto/`へcopyする。
-Rendererはこのlocal XYZ cacheを自動使用し、表示範囲に応じてz14..z17を動的に選択する。写真が存在しない範囲またはcacheが欠落した範囲では従来のENU gridを維持する。
+
+Rendererは以下の方針で表示する。
+
+- Launcher `(0, 0)` と最新のvalid GNSS位置だけが入る最小範囲へfitする。過去の最遠点はzoom決定へ使わない。
+- fitは画面aspect ratioを考慮するため、横長mapで不要にzoom outしない。
+- 新しいGNSS位置でcenter/scaleが変わる場合は短時間補間し、表示jumpを抑える。
+- 写真が存在しないtileは標準地図へ差し替えない。周辺の取得済み写真から平均色を求め、**色だけ**を補間して背景を埋める。
+- 色補間部は実写真ではないため、画面に`PHOTO GAP FILL ... / COLOR ONLY`と明示する。
+- telemetry更新で画面DOMが再生成されてもmap/3D/chartのCanvas hostを保持し、detach/reattachによるフリッカーを防ぐ。
 
 任意の範囲を取得する場合は次のように指定できる。
 

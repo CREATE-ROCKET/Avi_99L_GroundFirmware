@@ -56,4 +56,7 @@ export function runUiV2Tests() {
   assert.equal(isActionAvailable('wakeMission', 'Descent', 'RecoveryBeacon'), true);
   assert.equal(isActionAvailable('dumpMissionSd', 'Control', 'MissionLinkFallback'), true);
   assert.throws(() => buildCommand('paraMoveRelative', { angle: 180 }), /< 180/);
+  assert.throws(() => buildCommand('setParaOpen', { direction: undefined }), /CW or CCW/);
+  assert.throws(() => buildCommand('setParaOpen', { direction: 'cw' }), /CW or CCW/);
+  assert.throws(() => buildCommand('setParaClose', { direction: 'LEFT' }), /CW or CCW/);
 }

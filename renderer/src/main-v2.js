@@ -5,6 +5,7 @@ import { RocketViewV2, LocalMapViewV2 } from './visuals-v2.js';
 import { SharedTrackChart } from './chart-v2.js';
 import { AlertSound } from './sound.js';
 import { createScreenRenderer } from './screens-v2.js';
+import { createForceStartUi } from './force-start-ui.js';
 import { buildCommand, isActionAvailable } from '../../shared/command-catalog.js';
 
 const fallbackDevMode = Boolean(import.meta.env.DEV) || import.meta.env.VITE_CREATE_99L_DEV_MODE === '1';
@@ -70,6 +71,7 @@ let spaceFired = false;
 let lastHandledTimeRequestId = null;
 
 const screens = createScreenRenderer({ store, devMode: DEV_MODE, loggerStatus: () => loggerStatus });
+const forceStartUi = createForceStartUi({ store, onForce: () => dispatchAction('forceStartSequence') });
 
 function showToast(message) {
   toast.textContent = message;
@@ -84,6 +86,10 @@ function effectiveCommandState() {
 function activeInput() {
   const node = document.activeElement;
   return node && ['INPUT', 'SELECT', 'TEXTAREA'].includes(node.tagName);
+}
+function renderTopbar() {
+  topbar.innerHTML = screens.topbar();
+  forceStartUi.decorateTopbar(topbar);
 }
 
 function createFlightChart(host, frozen = false) {
@@ -186,6 +192,7 @@ function renderDrawers() {
 }
 
 function bindUi() {
+  forceStartUi.decorateScreen(viewRoot);
   document.querySelectorAll('[data-command-tab]').forEach((button) => button.addEventListener('click', () => {
     commandTab = button.dataset.commandTab;
     renderAll(true);
@@ -226,12 +233,12 @@ function bindDrawerUi() {
 
 function renderAll(force = false) {
   if (!force && activeInput()) {
-    topbar.innerHTML = screens.topbar();
+    renderTopbar();
     if (dataOpen || devOpen) { renderDrawers(); bindDrawerUi(); }
     return;
   }
   disposeCharts();
-  topbar.innerHTML = screens.topbar();
+  renderTopbar();
   tabsRoot.innerHTML = screens.tabs(commandTab);
   viewRoot.innerHTML = screens.screen(commandTab);
   renderDrawers();
@@ -340,6 +347,7 @@ async function maybeReplyGroundTime() {
 
 store.addEventListener('update', () => { scheduleRender(); void maybeReplyGroundTime(); });
 store.addEventListener('liftoff', (event) => triggerLiftoff(event.detail));
+store.addEventListener('command-result', (event) => forceStartUi.handleCommandResult(event.detail));
 store.addEventListener('app-decode-mismatch', (event) => { if (window.groundApi) window.groundApi.recordAppDecodeMismatch(event.detail); });
 
 document.querySelector('#refresh-ports').addEventListener('click', refreshPorts);
@@ -403,6 +411,4 @@ renderAll(true);
 // RX age and other clock-derived topbar values need a timer, but chart redraws are
 // driven by store updates / resize / view changes. Redrawing long histories at
 // 10 Hz while idle wastes CPU and battery without changing any data.
-setInterval(() => {
-  topbar.innerHTML = screens.topbar();
-}, 250);
+setInterval(renderTopbar, 250);

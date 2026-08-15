@@ -4,6 +4,7 @@ import {
   LAUNCH_REFERENCE_LON_DEG,
   enuSquareBounds,
   enuToLatLon,
+  fitLauncherAndTarget,
   latLonToEnu,
   selectTileZoom,
   tilePlanForEnuSquare,
@@ -42,4 +43,17 @@ export function runOfflineMapTests() {
 
   assert.equal(selectTileZoom(0.04), 14);
   assert.equal(selectTileZoom(5), 17);
+
+  const recoveryFit = fitLauncherAndTarget(-4418, 1429, 1190, 382);
+  closeTo(recoveryFit.centerE, -2209);
+  closeTo(recoveryFit.centerN, 714.5);
+  closeTo(recoveryFit.scale, 0.2099370188943317, 1e-12);
+  assert.equal(recoveryFit.spanE, 4418);
+  assert.equal(recoveryFit.spanN, 1429);
+
+  const nearLauncherFit = fitLauncherAndTarget(0, 0, 1000, 500);
+  assert.equal(nearLauncherFit.spanE, 500);
+  assert.equal(nearLauncherFit.spanN, 500);
+  assert.ok(nearLauncherFit.scale > 0);
+  assert.throws(() => fitLauncherAndTarget(0, 0, 0, 500), /invalid fit geometry/);
 }

@@ -14,6 +14,7 @@ const SOURCE_TEMPLATE = 'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/
 const DEFAULT_OUTPUT = path.resolve('public/maps/gsi-seamlessphoto');
 const MAX_RETRIES = 4;
 const REQUEST_DELAY_MS = 75;
+const UNAVAILABLE_SUFFIX = '.unavailable';
 
 function usage() {
   console.log(`99L offline map downloader
@@ -23,12 +24,13 @@ Usage:
   node scripts/download-offline-map.mjs [options]
 
 Options:
-  --size-km <km>       Launcher-centered square size (default: ${DEFAULT_MAP_SIZE_KM})
-  --min-zoom <z>       Minimum zoom (default: ${DEFAULT_MIN_ZOOM})
-  --max-zoom <z>       Maximum zoom (default: ${DEFAULT_MAX_ZOOM})
-  --concurrency <n>    Concurrent downloads, 1..8 (default: 4)
-  --out <directory>    Output directory (default: public/maps/gsi-seamlessphoto)
-  --help               Show this help
+  --size-km <km>          Launcher-centered square size (default: ${DEFAULT_MAP_SIZE_KM})
+  --min-zoom <z>          Minimum zoom (default: ${DEFAULT_MIN_ZOOM})
+  --max-zoom <z>          Maximum zoom (default: ${DEFAULT_MAX_ZOOM})
+  --concurrency <n>       Concurrent downloads, 1..8 (default: 4)
+  --out <directory>       Output directory (default: public/maps/gsi-seamlessphoto)
+  --refresh-unavailable   Retry tiles previously marked unavailable (HTTP 404)
+  --help                  Show this help
 `);
 }
 
@@ -51,10 +53,15 @@ function parseArgs(argv) {
     maxZoom: DEFAULT_MAX_ZOOM,
     concurrency: 4,
     out: DEFAULT_OUTPUT,
+    refreshUnavailable: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help') return { ...options, help: true };
+    if (arg === '--refresh-unavailable') {
+      options.refreshUnavailable = true;
+      continue;
+    }
     const value = argv[++i];
     if (value === undefined) throw new Error(`missing value for ${arg}`);
     if (arg === '--size-km') options.sizeKm = parseNumber(value, arg);
@@ -76,6 +83,16 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function fileExists(filename) {
+  try {
+    await fs.stat(filename);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
 async function fileExistsNonEmpty(filename) {
   try {
     return (await fs.stat(filename)).size > 0;
@@ -92,30 +109,59 @@ function sourceUrl(zoom, x, y) {
     .replace('{y}', String(y));
 }
 
-async function downloadOne(task, outputRoot) {
+function httpError(response) {
+  const error = new Error(`HTTP ${response.status}`);
+  error.retryable = response.status === 429 || response.status >= 500;
+  const retryAfterSeconds = Number(response.headers.get('retry-after'));
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+    error.retryAfterMs = retryAfterSeconds * 1000;
+  }
+  return error;
+}
+
+async function downloadOne(task, outputRoot, { refreshUnavailable = false } = {}) {
   const filename = path.join(outputRoot, String(task.zoom), String(task.x), `${task.y}.jpg`);
+  const unavailableMarker = `${filename}${UNAVAILABLE_SUFFIX}`;
   if (await fileExistsNonEmpty(filename)) return 'skipped';
+  if (await fileExists(unavailableMarker)) {
+    if (!refreshUnavailable) return 'unavailable';
+    await fs.rm(unavailableMarker, { force: true });
+  }
   await fs.mkdir(path.dirname(filename), { recursive: true });
 
   let lastError = null;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt += 1) {
     try {
-      const response = await fetch(sourceUrl(task.zoom, task.x, task.y), {
+      const url = sourceUrl(task.zoom, task.x, task.y);
+      const response = await fetch(url, {
         headers: { 'User-Agent': 'CREATE-99L-Ground-Station/0.1 offline-map-downloader' },
         signal: AbortSignal.timeout(15000),
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (response.status === 404) {
+        await fs.writeFile(unavailableMarker, `${url}\n`);
+        return 'unavailable';
+      }
+      if (!response.ok) throw httpError(response);
       const contentType = response.headers.get('content-type') ?? '';
-      if (!contentType.startsWith('image/')) throw new Error(`unexpected content-type: ${contentType || 'unknown'}`);
+      if (!contentType.startsWith('image/')) {
+        const error = new Error(`unexpected content-type: ${contentType || 'unknown'}`);
+        error.retryable = false;
+        throw error;
+      }
       const bytes = Buffer.from(await response.arrayBuffer());
       if (bytes.length === 0) throw new Error('empty response');
       const temporary = `${filename}.part`;
       await fs.writeFile(temporary, bytes);
       await fs.rename(temporary, filename);
+      await fs.rm(unavailableMarker, { force: true });
       return 'downloaded';
     } catch (error) {
       lastError = error;
-      if (attempt < MAX_RETRIES) await sleep(300 * (2 ** (attempt - 1)));
+      if (error?.retryable === false) break;
+      if (attempt < MAX_RETRIES) {
+        const retryDelay = error?.retryAfterMs ?? 300 * (2 ** (attempt - 1));
+        await sleep(retryDelay);
+      }
     }
   }
   throw new Error(`${task.zoom}/${task.x}/${task.y}: ${lastError?.message ?? 'download failed'}`);
@@ -131,9 +177,9 @@ function buildTasks(ranges) {
   return tasks;
 }
 
-async function writeMetadata(options, plan, stats) {
+async function writeMetadata(options, plan, stats, unavailableTiles) {
   const metadata = {
-    schema: 1,
+    schema: 2,
     source: '国土地理院 全国最新写真（シームレス）',
     sourceTemplate: SOURCE_TEMPLATE,
     attribution: '出典: 国土地理院',
@@ -144,6 +190,8 @@ async function writeMetadata(options, plan, stats) {
     bounds: plan.bounds,
     ranges: plan.ranges,
     totalTiles: plan.totalCount,
+    unavailableCount: stats.unavailable,
+    unavailableTiles: unavailableTiles.sort(),
     complete: stats.failed === 0,
     downloadedAtUtc: new Date().toISOString(),
   };
@@ -159,7 +207,8 @@ async function main() {
 
   const plan = tilePlanForEnuSquare(options);
   const tasks = buildTasks(plan.ranges);
-  const stats = { downloaded: 0, skipped: 0, failed: 0, finished: 0 };
+  const stats = { downloaded: 0, skipped: 0, unavailable: 0, failed: 0, finished: 0 };
+  const unavailableTiles = [];
   const failures = [];
   let nextIndex = 0;
 
@@ -178,22 +227,23 @@ async function main() {
       if (index >= tasks.length) return;
       const task = tasks[index];
       try {
-        const result = await downloadOne(task, options.out);
+        const result = await downloadOne(task, options.out, options);
         stats[result] += 1;
+        if (result === 'unavailable') unavailableTiles.push(`${task.zoom}/${task.x}/${task.y}`);
       } catch (error) {
         stats.failed += 1;
         failures.push(error.message);
       }
       stats.finished += 1;
       if (stats.finished % 100 === 0 || stats.finished === tasks.length) {
-        console.log(`progress ${stats.finished}/${tasks.length} downloaded=${stats.downloaded} skipped=${stats.skipped} failed=${stats.failed}`);
+        console.log(`progress ${stats.finished}/${tasks.length} downloaded=${stats.downloaded} skipped=${stats.skipped} unavailable=${stats.unavailable} failed=${stats.failed}`);
       }
       await sleep(REQUEST_DELAY_MS);
     }
   };
 
   await Promise.all(Array.from({ length: options.concurrency }, () => worker()));
-  await writeMetadata(options, plan, stats);
+  await writeMetadata(options, plan, stats, unavailableTiles);
 
   if (failures.length > 0) {
     console.error(`failed tiles: ${failures.length}`);
@@ -202,7 +252,7 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  console.log('offline map download complete');
+  console.log(`offline map download complete / available=${stats.downloaded + stats.skipped} unavailable=${stats.unavailable}`);
 }
 
 try {

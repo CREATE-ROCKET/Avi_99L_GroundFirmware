@@ -12,10 +12,15 @@ export const PacketHeader = Object.freeze({
   DESCENT: 0xA4,
   RECOVERY_BEACON: 0xA5,
   RECOVERY_LOG_DATA: 0xA6,
-  COMBOARD_FALLBACK: 0xA7,
+  CONTROL_ROLL_TELEMETRY_V2: 0xA7,
+  MISSION_LINK_FALLBACK_TELEMETRY: 0xA8,
   COMMAND_RESULT: 0xB0,
   GROUND_TIME_REQUEST: 0xB1,
 });
+
+export const CONTROL_ROLL_TELEMETRY_V2_SCHEMA_VERSION = 2;
+export const CONTROL_ROLL_TELEMETRY_V2_VAULT_SOURCE =
+  'f789fdef395c7b066d838a8f566ea4984231ab34';
 
 export const packetNames = Object.freeze({
   [PacketHeader.COMMAND_RECEIVE]: 'CommandReceive',
@@ -25,7 +30,8 @@ export const packetNames = Object.freeze({
   [PacketHeader.DESCENT]: 'Descent',
   [PacketHeader.RECOVERY_BEACON]: 'RecoveryBeacon',
   [PacketHeader.RECOVERY_LOG_DATA]: 'RecoveryLogData',
-  [PacketHeader.COMBOARD_FALLBACK]: 'ComBoardFallback',
+  [PacketHeader.CONTROL_ROLL_TELEMETRY_V2]: 'ControlRollTelemetryV2',
+  [PacketHeader.MISSION_LINK_FALLBACK_TELEMETRY]: 'MissionLinkFallbackTelemetry',
   [PacketHeader.COMMAND_RESULT]: 'CommandResult',
   [PacketHeader.GROUND_TIME_REQUEST]: 'GroundTimeRequest',
 });
@@ -38,6 +44,8 @@ export const expectedApplicationLengths = Object.freeze({
   [PacketHeader.DESCENT]: 15,
   [PacketHeader.RECOVERY_BEACON]: 12,
   [PacketHeader.RECOVERY_LOG_DATA]: 24,
+  [PacketHeader.CONTROL_ROLL_TELEMETRY_V2]: 9,
+  [PacketHeader.MISSION_LINK_FALLBACK_TELEMETRY]: 24,
   [PacketHeader.COMMAND_RESULT]: 10,
   [PacketHeader.GROUND_TIME_REQUEST]: 3,
 });
@@ -78,6 +86,15 @@ function signed(raw, width) {
   return raw >= signBit ? raw - full : raw;
 }
 
+export function wrapOrientationDegrees(value) {
+  if (!Number.isFinite(value)) return null;
+  return ((value + 180) % 360 + 360) % 360 - 180;
+}
+
+function uint16Le(bytes, offset) {
+  return bytes[offset] | (bytes[offset + 1] << 8);
+}
+
 function field(key, label, group, raw, value = null, unit = '', status = 'VALID') {
   return { key, label, group, raw, value, unit, status };
 }
@@ -104,6 +121,12 @@ const commonImuErrors = {
   0x8009: 'ODR_CHANGED', 0x800A: 'SATURATED_OR_OUT_OF_RANGE', 0x800B: 'TIMESTAMP_INVALID',
   0x800C: 'ATTITUDE_ESTIMATOR_INVALID', 0x800D: 'RESET_INVALIDATED',
   0x800E: 'INTERNAL_ERROR', 0x800F: 'UNKNOWN',
+};
+
+const controlRollV2Errors = {
+  ...commonImuErrors,
+  // A7 carries paired range flags, so the legacy common code is unambiguous.
+  0x800A: 'OUT_OF_RANGE',
 };
 
 const finAngleErrors = {
@@ -230,8 +253,14 @@ function decodeFlight(bytes, header) {
 
   const rollRaw = reader.read(16);
   const rollRateRaw = reader.read(16);
-  addSemantic(fields, 'roll', 'Roll', 'Attitude', rollRaw,
-    signedWithReserved(rollRaw, 16, 0x8000, 0x800F, 0.5, commonImuErrors), 'deg');
+  const rollDecoded = signedWithReserved(
+    rollRaw, 16, 0x8000, 0x800F, 0.5, commonImuErrors);
+  addSemantic(fields, 'roll', 'Liftoff-relative roll (v1, unwrapped)', 'Attitude',
+    rollRaw, rollDecoded, 'deg');
+  addSemantic(fields, 'wrappedOrientation', 'Wrapped orientation (display only)', 'Attitude',
+    rollRaw, rollDecoded.status === 'VALID'
+      ? { value: wrapOrientationDegrees(rollDecoded.value), status: 'VALID' }
+      : rollDecoded, 'deg');
   addSemantic(fields, 'rollRate', 'Roll rate', 'Attitude', rollRateRaw,
     signedWithReserved(rollRateRaw, 16, 0x8000, 0x800F, 0.1, commonImuErrors), 'deg/s');
 
@@ -429,6 +458,165 @@ function decodeRecoveryLog(bytes) {
   ]};
 }
 
+function decodeControlRollTelemetryV2(bytes) {
+  const schemaVersion = bytes[1];
+  const referenceRaw = uint16Le(bytes, 2);
+  const deviationRaw = uint16Le(bytes, 4);
+  const flags = bytes[6];
+  const captureSequence = bytes[7];
+  const reference = signedWithReserved(
+    referenceRaw, 16, 0x8000, 0x800F, 0.5, controlRollV2Errors);
+  const deviation = signedWithReserved(
+    deviationRaw, 16, 0x8000, 0x800F, 0.5, controlRollV2Errors);
+  const referenceValid = Boolean(flags & 0x01);
+  const referenceCaptured = Boolean(flags & 0x02);
+  const controlActive = Boolean(flags & 0x04);
+  const referenceOutOfRange = Boolean(flags & 0x08);
+  const deviationOutOfRange = Boolean(flags & 0x10);
+  const contractErrors = [];
+  if (schemaVersion !== CONTROL_ROLL_TELEMETRY_V2_SCHEMA_VERSION) {
+    contractErrors.push('UNSUPPORTED_SCHEMA');
+  }
+  if ((flags & 0xE0) !== 0) contractErrors.push('RESERVED_FLAGS_NONZERO');
+  if (referenceValid !== (reference.status === 'VALID')) {
+    contractErrors.push('REFERENCE_VALID_MISMATCH');
+  }
+  if (referenceCaptured && !referenceValid) {
+    contractErrors.push('CAPTURE_WITHOUT_VALID_REFERENCE');
+  }
+  if (referenceOutOfRange !== (referenceRaw === 0x800A)) {
+    contractErrors.push('REFERENCE_RANGE_FLAG_MISMATCH');
+  }
+  if (deviationOutOfRange !== (deviationRaw === 0x800A)) {
+    contractErrors.push('DEVIATION_RANGE_FLAG_MISMATCH');
+  }
+  const corrective = deviation.status === 'VALID'
+    ? { value: -deviation.value, status: 'VALID' }
+    : { value: null, status: deviation.status };
+  const schemaStatus = schemaVersion === CONTROL_ROLL_TELEMETRY_V2_SCHEMA_VERSION
+    ? 'VALID' : 'UNSUPPORTED_SCHEMA';
+  const fields = [
+    field('controlRollSchemaVersion', 'Control roll schema version', 'Control roll V2',
+      schemaVersion, schemaVersion, '', schemaStatus),
+  ];
+  addSemantic(fields, 'controlRollReferenceUnwrapped', 'Control roll reference (unwrapped)',
+    'Control roll V2', referenceRaw, reference, 'deg');
+  addSemantic(fields, 'rollDeviationUnwrapped', 'Roll deviation (unwrapped)',
+    'Control roll V2', deviationRaw, deviation, 'deg');
+  addSemantic(fields, 'correctiveRollErrorUnwrapped', 'Corrective roll error (unwrapped)',
+    'Control roll V2', null, corrective, 'deg');
+  fields.push(
+    field('controlRollReferenceValid', 'Control reference valid', 'Control roll V2',
+      flags & 0x01, referenceValid),
+    field('controlRollReferenceCaptured', 'Reference captured since previous frame',
+      'Control roll V2', (flags >> 1) & 1, referenceCaptured),
+    field('controlActiveV2', 'Control active', 'Control roll V2',
+      (flags >> 2) & 1, controlActive),
+    field('controlRollReferenceOutOfRange', 'Control reference OUT_OF_RANGE',
+      'Control roll V2', (flags >> 3) & 1, referenceOutOfRange),
+    field('rollDeviationOutOfRange', 'Roll deviation OUT_OF_RANGE',
+      'Control roll V2', (flags >> 4) & 1, deviationOutOfRange),
+    field('controlRollFlagsRaw', 'Control roll flags raw', 'Control roll V2',
+      flags, `0x${flags.toString(16).padStart(2, '0').toUpperCase()}`),
+    field('controlRollCaptureEventSequence', 'Reference capture event sequence',
+      'Control roll V2', captureSequence, captureSequence),
+    field('checksum', 'XOR checksum', 'Protocol', bytes[8],
+      `0x${bytes[8].toString(16).padStart(2, '0').toUpperCase()}`),
+  );
+  return {
+    header: PacketHeader.CONTROL_ROLL_TELEMETRY_V2,
+    packetName: 'ControlRollTelemetryV2',
+    missionState: null,
+    fields,
+    contractValid: contractErrors.length === 0,
+    contractError: contractErrors.join(','),
+  };
+}
+
+function decodeMissionLinkFallbackTelemetry(bytes) {
+  const schemaVersion = bytes[1];
+  const sequence = bytes[2];
+  const reason = bytes[3];
+  const flags = uint16Le(bytes, 4);
+  const lastMissionState = bytes[6];
+  const gnssState = bytes[7];
+  const missionStatusAge = uint16Le(bytes, 8);
+  const missionPeriodicAge = uint16Le(bytes, 10);
+  const powerTimeAge = uint16Le(bytes, 12);
+  const eastRaw = uint16Le(bytes, 14);
+  const northRaw = uint16Le(bytes, 16);
+  const heightRaw = uint16Le(bytes, 18);
+  const logicRaw = bytes[20];
+  const motorRaw = bytes[21];
+  const canHealth = bytes[22];
+  const reasonNames = [
+    'STARTUP_WAITING', 'MISSION_STATUS_TIMEOUT', 'NO_MISSION_TRAFFIC',
+    'CAN_BUS_OFF', 'CAN_RECOVERING', 'MISSION_STATUS_INVALID', 'FORCED_TEST', 'UNKNOWN',
+  ];
+  const missionStateNames = ['CommandReceive', 'LiftoffDetection', 'EngineBurn', 'Control', 'Descent'];
+  const gnssStateNames = [
+    'OFF', 'STARTING', 'RECEIVER_DETECTED', 'CONFIGURATION_FAILED',
+    'RECEIVER_ERROR', 'NO_FIX', 'VALID_FIX', 'INVALID_SAMPLE', 'STALE',
+  ];
+  const canHealthNames = [
+    'UNKNOWN', 'ACTIVE', 'WARNING', 'PASSIVE', 'BUS_OFF', 'RECOVERING', 'CONTROLLER_ERROR',
+  ];
+  const age = (raw) => raw === 0xFFFF
+    ? { value: null, status: 'NEVER_OR_UNAVAILABLE' }
+    : { value: raw * 0.1, status: 'VALID' };
+  const fields = [
+    field('communicationMode', 'Communication mode', 'Mission link fallback', null,
+      'MissionLinkFallback'),
+    field('fallbackSchemaVersion', 'Fallback schema version', 'Mission link fallback',
+      schemaVersion, schemaVersion, '', schemaVersion === 1 ? 'VALID' : 'UNSUPPORTED_SCHEMA'),
+    field('fallbackSequence', 'Fallback sequence', 'Mission link fallback', sequence, sequence),
+    field('fallbackReason', 'Primary loss reason', 'Mission link fallback', reason,
+      reasonNames[reason] ?? 'RESERVED', '', reason <= 7 ? 'VALID' : 'RESERVED'),
+    field('fallbackStatusFlagsRaw', 'Fallback status flags raw', 'Mission link fallback',
+      flags, `0x${flags.toString(16).padStart(4, '0').toUpperCase()}`),
+    field('fallbackLastMissionState', 'Last valid MissionState', 'Mission link fallback',
+      lastMissionState, lastMissionState === 0xFF ? 'NEVER_RECEIVED'
+        : (missionStateNames[lastMissionState] ?? 'RESERVED'), '',
+      lastMissionState <= 4 || lastMissionState === 0xFF ? 'VALID' : 'RESERVED'),
+    field('fallbackGnssState', 'GNSS state', 'Mission link fallback', gnssState,
+      gnssStateNames[gnssState] ?? 'RESERVED', '', gnssState <= 8 ? 'VALID' : 'RESERVED'),
+  ];
+  addSemantic(fields, 'fallbackMissionStatusAge', 'MissionStatus age',
+    'Mission link fallback', missionStatusAge, age(missionStatusAge), 's');
+  addSemantic(fields, 'fallbackMissionPeriodicAge', 'Any Mission periodic CAN age',
+    'Mission link fallback', missionPeriodicAge, age(missionPeriodicAge), 's');
+  addSemantic(fields, 'fallbackPowerTimeAge', 'PowerTime age',
+    'Mission link fallback', powerTimeAge, age(powerTimeAge), 's');
+  addSemantic(fields, 'fallbackEast', 'GNSS East', 'Mission link fallback', eastRaw,
+    signedWithReserved(eastRaw, 16, 0x8000, 0x800F, 1, coordinateErrors), 'm');
+  addSemantic(fields, 'fallbackNorth', 'GNSS North', 'Mission link fallback', northRaw,
+    signedWithReserved(northRaw, 16, 0x8000, 0x800F, 1, coordinateErrors), 'm');
+  addSemantic(fields, 'fallbackHeight', 'GNSS absolute height', 'Mission link fallback', heightRaw,
+    semantic(heightRaw, 495, 5, -100, heightErrors), 'm');
+  addSemantic(fields, 'fallbackLogicVoltage', 'Last logic voltage', 'Mission link fallback',
+    logicRaw, semantic(logicRaw, 240, 0.05, 0, batteryErrors), 'V');
+  addSemantic(fields, 'fallbackMotorVoltage', 'Last motor voltage', 'Mission link fallback',
+    motorRaw, semantic(motorRaw, 240, 0.05, 0, batteryErrors), 'V');
+  fields.push(
+    field('fallbackCanHealth', 'CAN health', 'Mission link fallback', canHealth,
+      canHealthNames[canHealth] ?? 'RESERVED', '', canHealth <= 6 ? 'VALID' : 'RESERVED'),
+    field('checksum', 'XOR checksum', 'Protocol', bytes[23],
+      `0x${bytes[23].toString(16).padStart(2, '0').toUpperCase()}`),
+  );
+  const contractValid = schemaVersion === 1 && reason <= 7 && (flags & 0x8000) === 0
+    && (lastMissionState <= 4 || lastMissionState === 0xFF)
+    && gnssState <= 8 && heightRaw <= 0x01FF && canHealth <= 6;
+  return {
+    header: PacketHeader.MISSION_LINK_FALLBACK_TELEMETRY,
+    packetName: 'MissionLinkFallbackTelemetry',
+    missionState: null,
+    communicationMode: 'MissionLinkFallback',
+    fields,
+    contractValid,
+    contractError: contractValid ? '' : 'INVALID_MISSION_LINK_FALLBACK_V1',
+  };
+}
+
 export function xorChecksumValid(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 2) return false;
   let xor = 0;
@@ -453,13 +641,17 @@ export function decodeApplicationPacket(bytes) {
     case PacketHeader.DESCENT: decoded = decodeDescent(bytes); break;
     case PacketHeader.RECOVERY_BEACON: decoded = decodeRecovery(bytes); break;
     case PacketHeader.RECOVERY_LOG_DATA: decoded = decodeRecoveryLog(bytes); break;
+    case PacketHeader.CONTROL_ROLL_TELEMETRY_V2:
+      decoded = decodeControlRollTelemetryV2(bytes); break;
+    case PacketHeader.MISSION_LINK_FALLBACK_TELEMETRY:
+      decoded = decodeMissionLinkFallbackTelemetry(bytes); break;
     case PacketHeader.COMMAND_RESULT: decoded = decodeCommandResult(bytes); break;
     case PacketHeader.GROUND_TIME_REQUEST: decoded = decodeGroundTimeRequest(bytes); break;
     default:
       decoded = {
         header,
         packetName: packetNames[header] ?? `Unknown_0x${header.toString(16).padStart(2,'0').toUpperCase()}`,
-        missionState: header === PacketHeader.COMBOARD_FALLBACK ? 'ComBoardFallback' : null,
+        missionState: null,
         fields: [],
       };
   }
@@ -470,10 +662,62 @@ export function decodeApplicationPacket(bytes) {
     actualLength: bytes.length,
     lengthValid,
     checksumValid,
+    contractValid: decoded.contractValid ?? true,
+    contractError: decoded.contractError ?? '',
     bytes,
   };
 }
 
 export function fieldMap(decoded) {
   return Object.fromEntries(decoded.fields.map((item) => [item.key, item]));
+}
+
+function exportedNumeric(item) {
+  return item?.status === 'VALID' && Number.isFinite(item.value) ? item.value : null;
+}
+
+export function rollTelemetryExport(decoded, usbSequence = null) {
+  const map = fieldMap(decoded);
+  if ([PacketHeader.LIFTOFF_DETECTION, PacketHeader.ENGINE_BURN, PacketHeader.CONTROL]
+    .includes(decoded.header)) {
+    return {
+      kind: 'wrapped_orientation_v1',
+      usbSequence,
+      packetHeader: decoded.header,
+      wrappedOrientationDeg: exportedNumeric(map.wrappedOrientation),
+      liftoffRollUnwrappedDeg: exportedNumeric(map.roll),
+      liftoffRollStatus: map.roll?.status ?? 'MISSING',
+      controlRollReferenceUnwrappedDeg: null,
+      controlRollReferenceStatus: 'NOT_IN_PACKET',
+      rollDeviationUnwrappedDeg: null,
+      rollDeviationStatus: 'NOT_IN_PACKET',
+      correctiveRollErrorUnwrappedDeg: null,
+      referenceValid: null,
+      referenceCaptured: null,
+      controlActive: null,
+      referenceOutOfRange: null,
+      deviationOutOfRange: null,
+      captureEventSequence: null,
+    };
+  }
+  if (decoded.header !== PacketHeader.CONTROL_ROLL_TELEMETRY_V2) return null;
+  return {
+    kind: 'control_roll_v2',
+    usbSequence,
+    packetHeader: decoded.header,
+    wrappedOrientationDeg: null,
+    liftoffRollUnwrappedDeg: null,
+    liftoffRollStatus: 'NOT_IN_PACKET',
+    controlRollReferenceUnwrappedDeg: exportedNumeric(map.controlRollReferenceUnwrapped),
+    controlRollReferenceStatus: map.controlRollReferenceUnwrapped?.status ?? 'MISSING',
+    rollDeviationUnwrappedDeg: exportedNumeric(map.rollDeviationUnwrapped),
+    rollDeviationStatus: map.rollDeviationUnwrapped?.status ?? 'MISSING',
+    correctiveRollErrorUnwrappedDeg: exportedNumeric(map.correctiveRollErrorUnwrapped),
+    referenceValid: map.controlRollReferenceValid?.value ?? null,
+    referenceCaptured: map.controlRollReferenceCaptured?.value ?? null,
+    controlActive: map.controlActiveV2?.value ?? null,
+    referenceOutOfRange: map.controlRollReferenceOutOfRange?.value ?? null,
+    deviationOutOfRange: map.rollDeviationOutOfRange?.value ?? null,
+    captureEventSequence: map.controlRollCaptureEventSequence?.value ?? null,
+  };
 }

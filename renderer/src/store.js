@@ -36,6 +36,7 @@ export class TelemetryStore extends EventTarget {
     this.sessionStartedAt = performance.now();
     this.sessionStartedHostMs = Date.now();
     this.state = 'UNKNOWN';
+    this.communicationMode = 'Normal';
     this.connection = { connected: false, path: null };
     this.latestByPacket = new Map();
     this.latestValues = new Map();
@@ -122,6 +123,7 @@ export class TelemetryStore extends EventTarget {
 
   clearCurrentTelemetry() {
     this.state = 'UNKNOWN';
+    this.communicationMode = 'Normal';
     this.latestByPacket.clear();
     this.latestValues.clear();
     this.latestFieldByKey.clear();
@@ -211,7 +213,9 @@ export class TelemetryStore extends EventTarget {
     if (record.valid) {
       try {
         decoded = decodeApplicationPacket(bytes);
-        if (!decoded.lengthValid || !decoded.checksumValid) appMismatch = 'APP_DECODE_MISMATCH';
+        if (!decoded.lengthValid || !decoded.checksumValid || !decoded.contractValid) {
+          appMismatch = decoded.contractError || 'APP_DECODE_MISMATCH';
+        }
       } catch {
         appMismatch = 'APP_DECODE_MISMATCH';
       }
@@ -340,8 +344,16 @@ export class TelemetryStore extends EventTarget {
     }
 
     if (decoded.missionState) this.state = decoded.missionState;
+    if (decoded.communicationMode) {
+      this.communicationMode = decoded.communicationMode;
+    } else if (decoded.header >= PacketHeader.COMMAND_RECEIVE
+        && decoded.header <= PacketHeader.RECOVERY_LOG_DATA) {
+      this.communicationMode = 'Normal';
+    }
 
-    const periodic = decoded.header >= PacketHeader.COMMAND_RECEIVE && decoded.header <= PacketHeader.RECOVERY_BEACON;
+    const periodic = (decoded.header >= PacketHeader.COMMAND_RECEIVE
+      && decoded.header <= PacketHeader.RECOVERY_BEACON)
+      || decoded.header === PacketHeader.MISSION_LINK_FALLBACK_TELEMETRY;
     if (periodic) {
       if (this.lastPeriodicRxHostMs !== null) {
         this.lastIntervalMs = hostMs - this.lastPeriodicRxHostMs;
@@ -353,6 +365,7 @@ export class TelemetryStore extends EventTarget {
     const sessionSec = Math.max(0, (hostMs - this.sessionStartedHostMs) / 1000);
     const flightElapsed = numericField(map, 'flightElapsed');
     const roll = numericField(map, 'roll');
+    const wrappedOrientation = numericField(map, 'wrappedOrientation');
     const rollRate = numericField(map, 'rollRate');
     const tilt = numericField(map, 'tilt');
     const tiltDirection = numericField(map, 'tiltDirection');
@@ -370,7 +383,8 @@ export class TelemetryStore extends EventTarget {
 
     if (flightElapsed !== null) {
       pushBounded(this.flightHistory, {
-        t: flightElapsed, hostMs, roll, rollRate, tilt, tiltDirection, finAngle, finRate,
+        t: flightElapsed, hostMs, roll, wrappedOrientation, rollRate, tilt, tiltDirection,
+        finAngle, finRate,
         requestedTorque, pressure, temperature, airspeed, east, north, height,
       });
     }
@@ -387,9 +401,9 @@ export class TelemetryStore extends EventTarget {
       pushBounded(this.positionHistory, { t: flightElapsed ?? sessionSec, hostMs, east, north, height, valid: true });
     }
 
-    if (roll !== null && tilt !== null && tiltDirection !== null) {
+    if (wrappedOrientation !== null && tilt !== null && tiltDirection !== null) {
       this.attitudeSamples.push({
-        hostMs, roll, rollRate: rollRate ?? 0, tilt, tiltDirection,
+        hostMs, roll: wrappedOrientation, rollRate: rollRate ?? 0, tilt, tiltDirection,
         finAngle, finRate: finRate ?? 0,
       });
       if (this.attitudeSamples.length > MAX_ATTITUDE_SAMPLES) this.attitudeSamples.shift();

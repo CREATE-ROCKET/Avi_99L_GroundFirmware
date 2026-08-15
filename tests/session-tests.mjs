@@ -16,10 +16,28 @@ export function runSessionTests() {
   writer.setPort('/dev/test');
   writer.appendCommand('help', { localId: 1, state: 'LOCAL_QUEUED' });
   writer.appendSerialLine('rx', '# ok', { kind: 'pretty', rawLine: '# ok', text: 'ok' });
+  writer.appendRollTelemetry({
+    kind: 'control_roll_v2', usbSequence: 25, packetHeader: 0xA7,
+    wrappedOrientationDeg: null, liftoffRollUnwrappedDeg: null,
+    liftoffRollStatus: 'NOT_IN_PACKET', controlRollReferenceUnwrappedDeg: 0,
+    controlRollReferenceStatus: 'VALID', rollDeviationUnwrappedDeg: 380,
+    rollDeviationStatus: 'VALID', correctiveRollErrorUnwrappedDeg: -380,
+    referenceValid: true, referenceCaptured: false, controlActive: true,
+    referenceOutOfRange: false, deviationOutOfRange: false, captureEventSequence: 17,
+  });
   writer.appendConnectionEvent('disconnected');
   const lines = fs.readFileSync(path.join(writer.directory, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
-  assert.deepEqual(lines.slice(-3).map((event) => event.type), ['command', 'serial_line', 'connection']);
+  assert.deepEqual(lines.slice(-4).map((event) => event.type),
+    ['command', 'serial_line', 'roll_telemetry', 'connection']);
   assert.ok(lines.every((event) => typeof event.pcMonotonicNs === 'string'));
+  const rollLines = fs.readFileSync(path.join(writer.directory, 'roll-telemetry.csv'), 'utf8').trim().split('\n');
+  assert.equal(rollLines.length, 2);
+  assert.match(rollLines[0], /wrapped_orientation_deg/);
+  assert.match(rollLines[1], /0,VALID,380,VALID,-380,1,0,1,0,0,17$/);
+  const session = JSON.parse(fs.readFileSync(path.join(writer.directory, 'session.json'), 'utf8'));
+  assert.equal(session.schema, 2);
+  assert.equal(session.controlRollTelemetryV2VaultSource,
+    'f789fdef395c7b066d838a8f566ea4984231ab34');
 
   const closedFd = writer.eventsFd;
   fs.closeSync(closedFd);

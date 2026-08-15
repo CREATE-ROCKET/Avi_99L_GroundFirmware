@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { GroundSerialService, validateCommandText } from '../electron/ground-serial-service.mjs';
+import { readControlRollVectors } from './protocol-smoke.mjs';
 
 class FakeSerialPort extends EventEmitter {
   static instances = [];
@@ -30,12 +31,14 @@ class FakeSerialPort extends EventEmitter {
   set(_lines, callback) { callback(null); }
 }
 
+const rollExports = [];
 const sessionWriter = {
   setPort() {},
   appendConnectionEvent() {},
   appendParserError() {},
   appendSerialChunk() {},
   appendSerialLine() {},
+  appendRollTelemetry(value) { rollExports.push(value); },
   appendCommand() {},
 };
 
@@ -70,4 +73,18 @@ export async function runServiceTests() {
   assert.equal(FakeSerialPort.instances.length, 1);
   assert.equal(FakeSerialPort.instances[0].isOpen, false);
   assert.equal(FakeSerialPort.instances[0].listenerCount('data'), 0);
+
+  rollExports.length = 0;
+  const loggingService = new GroundSerialService({ sessionWriter });
+  const vector = readControlRollVectors().find((item) => item.name === 'PLUS_380');
+  loggingService.receiveChunk(Buffer.from(
+    `@RX usb_v=1 seq=25 board_ms=1000 dt_ms=NA rssi_present=0 rssi_raw=NA rssi_dbm=NA valid=1 header=0xA7 len=9 error=NONE raw=${vector.rawHex}\n`));
+  assert.equal(rollExports.length, 1);
+  assert.equal(rollExports[0].wrappedOrientationDeg, null);
+  assert.equal(rollExports[0].controlRollReferenceUnwrappedDeg, 0);
+  assert.equal(rollExports[0].rollDeviationUnwrappedDeg, 380);
+  assert.equal(rollExports[0].correctiveRollErrorUnwrappedDeg, -380);
+  loggingService.receiveChunk(Buffer.from(
+    '@RX usb_v=1 seq=26 board_ms=1500 dt_ms=500 rssi_present=0 rssi_raw=NA rssi_dbm=NA valid=1 header=0xA7 len=9 error=NONE raw=A7010000F802051148\n'));
+  assert.equal(rollExports.length, 1);
 }

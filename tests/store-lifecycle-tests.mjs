@@ -3,7 +3,7 @@ import { classifyUsbLine } from '../shared/usb-v1.js';
 import { escapeHtml } from '../shared/html.js';
 import { OutboundCommandTracker } from '../shared/command-lifecycle.js';
 import { TelemetryStore } from '../renderer/src/store.js';
-import { readGoldenVectors } from './protocol-smoke.mjs';
+import { readControlRollVectors, readGoldenVectors } from './protocol-smoke.mjs';
 
 function envelope(line, hostUnixMs = Date.now()) {
   return { hostUnixMs, rawLine: line, classification: classifyUsbLine(line) };
@@ -32,6 +32,32 @@ export function runStoreAndLifecycleTests() {
   assert.equal(store.getLatestValue('airspeed').status, 'SSC_NOT_INITIALIZED');
   assert.equal(store.getLatestValue('airspeed').value, null);
   assert.equal(store.rssiDbm, -84);
+  assert.equal(store.getLatestValue('controlRollReferenceUnwrapped'), null);
+  const orientationStore = new TelemetryStore();
+  orientationStore.ingestLineRecord(envelope(vectorMap.get('RX_A3_VALID')));
+  assert.ok(orientationStore.getLatestValue('wrappedOrientation'));
+  assert.ok(orientationStore.getLatestValue('roll'));
+  assert.equal(orientationStore.getLatestValue('controlRollReferenceUnwrapped'), null);
+  const controlVector = readControlRollVectors().find((vector) => vector.name === 'PLUS_380');
+  store.ingestLineRecord(envelope(
+    `@RX usb_v=1 seq=25 board_ms=1500 dt_ms=500 rssi_present=1 rssi_raw=172 rssi_dbm=-84 valid=1 header=0xA7 len=9 error=NONE raw=${controlVector.rawHex}`));
+  assert.equal(store.state, 'CommandReceive');
+  assert.equal(store.getLatestValue('controlRollReferenceUnwrapped').value, 0);
+  assert.equal(store.getLatestValue('rollDeviationUnwrapped').value, 380);
+  assert.equal(store.getLatestValue('correctiveRollErrorUnwrapped').value, -380);
+  const invalidControlStore = new TelemetryStore();
+  invalidControlStore.ingestLineRecord(envelope(
+    `@RX usb_v=1 seq=25 board_ms=1500 dt_ms=NA rssi_present=0 rssi_raw=NA rssi_dbm=NA valid=1 header=0xA7 len=9 error=NONE raw=${controlVector.rawHex}`));
+  invalidControlStore.ingestLineRecord(envelope(
+    '@RX usb_v=1 seq=26 board_ms=2000 dt_ms=500 rssi_present=0 rssi_raw=NA rssi_dbm=NA valid=1 header=0xA7 len=9 error=NONE raw=A7010000F802051148'));
+  assert.equal(invalidControlStore.appDecodeMismatches, 1);
+  assert.equal(invalidControlStore.getLatestValue('rollDeviationUnwrapped').value, 380);
+  const fallbackStore = new TelemetryStore();
+  fallbackStore.ingestLineRecord(envelope(vectorMap.get('RX_A0_VALID')));
+  fallbackStore.ingestLineRecord(envelope(
+    '@RX usb_v=1 seq=26 board_ms=2000 dt_ms=500 rssi_present=1 rssi_raw=172 rssi_dbm=-84 valid=1 header=0xA8 len=24 error=NONE raw=A8010901132003060A00090008000C00F4FF2800B4BE01B8'));
+  assert.equal(fallbackStore.state, 'CommandReceive');
+  assert.equal(fallbackStore.communicationMode, 'MissionLinkFallback');
   const priorStatus = store.getLatestValue('commandStatusRaw').raw;
   const invalidWithDifferentRssi = vectorMap.get('RX_A0_BAD_CHECKSUM')
     .replace('rssi_raw=172 rssi_dbm=-84', 'rssi_raw=160 rssi_dbm=-96');

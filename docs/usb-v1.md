@@ -57,7 +57,8 @@ manual release成功        → RESULT_UNKNOWN
 
 - `session.json`: schema、開始UTC、app version、platform、architecture。
 - `serial.bin`: USB RX/TX raw bytes。
-- `events.jsonl`: connection、serial chunk/line、parsed classification、parser error、command transition、Renderer latency、application decode mismatch。
+- `events.jsonl`: connection、serial chunk/line、parsed classification、parser error、command transition、Renderer latency、application decode mismatch、roll semantic record。
+- `roll-telemetry.csv`: wrapped orientation、v1 liftoff-relative unwrapped roll、V2 unwrapped reference/deviation/corrective errorを別columnで保存する解析export。deviationはwrapしない。
 
 各eventは`pcUtc`、stringの`pcMonotonicNs`、portを持ちます。write順を保ち、partial writeもerrorにし、各append後にfsyncします。disk failureはUIへ通知し、そのsession中はstickyに保持します。RendererのF5中もMain processのcaptureは継続し、最大4096 replay eventをstream IDでdeduplicateして戻します。
 
@@ -80,7 +81,7 @@ nix develop path:. --command npm run build:linux
 nix develop path:. --command npm run verify:linux-package
 ```
 
-`npm test`はGround Board repositoryとbyte-identicalな`testdata/99l_usb_v1_vectors.txt`を使用します。PTY testは`socat`でpseudo terminal pairを作り、実`serialport`→service→store/session経路、1 byte分割、malformed/pretty/unclassified、partial reconnect、10回reconnectとsingle listenerを確認します。Electron IPC/preload/paintを含む最終経路はdevelopment GUIとAppImageの実port試験で検証します。
+`npm test`はGround Board repositoryとbyte-identicalな`testdata/99l_usb_v1_vectors.txt`および`testdata/99l_control_roll_v2_vectors.txt`を使用します。後者はVault commit `f789fdef395c7b066d838a8f566ea4984231ab34`をsourceとし、+380/±720 degとOUT_OF_RANGEを両repositoryで同一byte列として検証します。PTY testは`socat`でpseudo terminal pairを作り、実`serialport`→service→store/session経路、1 byte分割、malformed/pretty/unclassified、partial reconnect、10回reconnectとsingle listenerを確認します。Electron IPC/preload/paintを含む最終経路はdevelopment GUIとAppImageの実port試験で検証します。
 
 desktop packageは一時directoryへruntime fileをcopyし、`npm ci --omit=dev`でlockfileどおりのphysical production dependency treeを作ってからelectron-builderへ渡します。これにより開発用`node_modules`がNix cacheへのsymlinkでも、`@serialport/*`、`node-gyp-build`、native `.node`をasar/unpackedへ確実に含めます。Nixの新しいglibcへ依存するlocal rebuildを禁止し、serialport配布済みlinux-x64 glibc prebuildを収録します。Linux package verificationは`appimage-run`で生成AppImageそのものを起動し、そのFHS runtime内からpackaged `serialport`をrequireして`SerialPort.list()`の成功まで確認します。
 

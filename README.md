@@ -2,6 +2,8 @@
 
 99L向けのWindows/Linux Ground Station prototypeです。`CREATE-ROCKET/Avi_tenkatenn_board`のUSB line protocolと、Vaultで定義した99L LoRa application packetを入力として扱います。
 
+Control roll protocol sourceはVault commit `f789fdef395c7b066d838a8f566ea4984231ab34`に固定しています。A7は`ControlRollTelemetryV2`、Mission link fallbackはA8です。
+
 本projectはまず、デザイン確定より先に以下を検証することを目的とします。
 
 - `rocket_fin_test.glb`の姿勢・動翼表示
@@ -68,7 +70,7 @@ World座標は次です。
 -Z = North
 ```
 
-telemetryの`tilt magnitude`、`tilt direction`、`roll`から表示Quaternionを作ります。
+telemetryの`tilt magnitude`、`tilt direction`、v1 liftoff-relative rollから作る表示専用`wrapped orientation`で表示Quaternionを作ります。v1 roll自体の意味は変更せず、Control reference/deviationへ再解釈しません。
 
 `PREDICT` modeでは未来packetを待ちません。
 
@@ -77,7 +79,7 @@ telemetryの`tilt magnitude`、`tilt direction`、`roll`から表示Quaternion�
 - 新packetとの誤差:約85 msの短いSLERP correction
 - last periodic RX age >= 1.0 s:予測を停止し、最後の姿勢でfreezeしてgray表示
 
-表示補正値は保存しません。diskへ保存するのは受信raw packetとdecoded sampleです。
+予測表示の補正値は保存しません。受信raw packetに加え、wrapped orientationとunwrapped Control reference/deviationを別columnにしたdecoded sampleを保存します。Control deviationを表示範囲へ合わせてwrapしません。
 
 ## GLB camera viewの固定方法
 
@@ -139,9 +141,10 @@ Documents\CREATE 99L Ground Station\logs\2026-08-13T12-34-56-789Z\
 session.json
 events.jsonl
 serial.bin
+roll-telemetry.csv
 ```
 
-`events.jsonl`は接続、全serial chunk/line、parsed record、parser error、command lifecycle、Renderer latency、application decoder mismatchを受信順で保存します。各eventにはPC UTC、string化したmonotonic nanoseconds、portを付けます。`serial.bin`はRX/TXのraw byteを保存します。各appendを`fsync`し、RendererのF5中もElectron Main processが受信・保存を継続します。disk errorはそのsession中stickyなfailureとして表示し、telemetry受信を可能な限り継続します。
+`events.jsonl`は接続、全serial chunk/line、parsed record、parser error、command lifecycle、Renderer latency、application decoder mismatch、roll semantic recordを受信順で保存します。`roll-telemetry.csv`はwrapped orientation、v1 liftoff-relative unwrapped roll、V2 reference/deviation/corrective errorを別columnでexportします。各eventにはPC UTC、string化したmonotonic nanoseconds、portを付けます。`serial.bin`はRX/TXのraw byteを保存します。各appendを`fsync`し、RendererのF5中もElectron Main processが受信・保存を継続します。disk errorはそのsession中stickyなfailureとして表示し、telemetry受信を可能な限り継続します。
 
 Rendererのpacket monitor/historyはboundedです。全履歴の基準はdisk sessionです。
 
@@ -203,7 +206,7 @@ GitHub Actionsの`Build desktop artifacts`はpush、pull request、手動実行�
 npm test
 ```
 
-共有golden vectorで既知9 packet type、length、XOR、strict USB v1 parser、framer、command lifecycle、session error/order、bounded storeを確認します。PTY integrationは実際のOS pseudo terminalと`serialport`を通し、任意chunk、partial disconnect、10回reconnect、single listener、TelemetryStore/sessionまでを確認します。
+共有golden vectorで既知11 packet type、length、XOR、strict USB v1 parser、framer、command lifecycle、session error/order、bounded storeを確認します。A7用vectorはGround Board repositoryとbyte-identicalで、+380 deg=760、+720 deg=1440、-720 deg=-1440、OUT_OF_RANGE、no-shortest-pathを検証します。PTY integrationは実際のOS pseudo terminalと`serialport`を通し、任意chunk、partial disconnect、10回reconnect、single listener、TelemetryStore/sessionまでを確認します。
 
 ## Headless serial CLI
 
@@ -262,7 +265,7 @@ F9でも離床alertを手動試験できます。
 - `requested torque` scaleはVault上でsimulation確定待ちのため、decoderでは`TEMPORARY_SCALE`と明示します。
 - 実機上のfin正方向とGLB正方向の対応は後で符号確認が必要です。
 - voltageは、それを含むpacketが届いた時点だけsampleを追加します。Flight packetに電圧が含まれない区間を補間・捏造しません。
-- A7 ComBoardFallbackはheaderだけ予約しており、正式field layoutが固定されるまでraw packet表示のみです。
+- A7は9 byte `ControlRollTelemetryV2`、Mission link fallbackはA8/24 byteです。旧A7 fallback packetをv2 Control rollとして再解釈せず、length/schema不一致でrejectします。
 - offline map画像のpixelとENU座標の厳密なgeoreference metadataは今後追加します。現prototypeは画像をpanel背景として読込みます。
 - current `CommandReceive` packingはVaultの22 byte v1を前提にしています。変更時はgolden vectorとdecoderを同時更新してください。
 - serial sessionは順序と即時永続化を優先してMain processで同期write/fsyncします。高packet rateでlatency targetを超える場合は、bounded utility process化を別途評価します。

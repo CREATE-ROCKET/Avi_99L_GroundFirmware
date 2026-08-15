@@ -128,7 +128,7 @@ const flightChart = new SharedTrackChart(document.querySelector('#flight-chart')
   getData: () => store.flightHistory,
   tracks: [
     { label: 'Attitude [deg]', maxGap: 1.0, series: [
-      { key: 'roll', label: 'ROLL', unit: '°', color: '#11110f' },
+      { key: 'wrappedOrientation', label: 'ORIENTATION (WRAPPED)', unit: '°', color: '#11110f' },
       { key: 'tilt', label: 'TILT', unit: '°', color: '#f05a28' },
     ], fallbackRange: [-30, 60], includeZero: true },
     { label: 'Angular rate [deg/s]', maxGap: 1.0, series: [
@@ -208,7 +208,11 @@ function metric(label, key) {
 
 function renderMetrics() {
   document.querySelector('#attitude-metrics').innerHTML = [
-    metric('ROLL', 'roll'), metric('ROLL RATE', 'rollRate'), metric('TILT', 'tilt'),
+    metric('ORIENTATION (WRAPPED)', 'wrappedOrientation'),
+    metric('LIFTOFF ROLL (UNWRAPPED)', 'roll'),
+    metric('CONTROL REF (UNWRAPPED)', 'controlRollReferenceUnwrapped'),
+    metric('CONTROL DEV (UNWRAPPED)', 'rollDeviationUnwrapped'),
+    metric('ROLL RATE', 'rollRate'), metric('TILT', 'tilt'),
     metric('TILT DIR', 'tiltDirection'), metric('FIN', 'finAngle'),
   ].join('');
   document.querySelector('#position-metrics').innerHTML = [
@@ -232,10 +236,11 @@ function renderOverview() {
   const ageClass = rxAge >= 2000 ? 'error' : rxAge >= 1000 ? 'stale' : rxAge >= 750 ? 'warn' : 'ok';
   return `
     <div class="state-summary ${ageClass}">
-      <span>STATE</span><strong>${state}</strong><small>RX AGE ${Number.isFinite(rxAge) ? `${(rxAge/1000).toFixed(2)} s` : '—'}</small>
+      <span>STATE</span><strong>${state}</strong><small>COMM ${store.communicationMode} / RX AGE ${Number.isFinite(rxAge) ? `${(rxAge/1000).toFixed(2)} s` : '—'}</small>
     </div>
     <div class="overview-grid">
-      ${metric('ROLL', 'roll')}${metric('TILT', 'tilt')}${metric('FIN', 'finAngle')}
+      ${metric('ORIENTATION', 'wrappedOrientation')}${metric('CONTROL REF', 'controlRollReferenceUnwrapped')}${metric('CONTROL DEV', 'rollDeviationUnwrapped')}
+      ${metric('LIFTOFF ROLL', 'roll')}${metric('TILT', 'tilt')}${metric('FIN', 'finAngle')}
       ${metric('TORQUE', 'requestedTorque')}${metric('LOGIC', 'logicVoltage')}${metric('MOTOR', 'motorVoltage')}
       ${metric('AIRSPEED', 'airspeed')}${metric('PARA', 'paraAngle')}${metric('HEIGHT', 'height')}
     </div>

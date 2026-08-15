@@ -68,11 +68,15 @@ button { cursor: pointer; }
 .title-note { margin-left: auto; color: var(--muted); font-size: 8px; font-weight: 650; }
 
 .attitude-panel, .map-panel { display: grid; grid-template-rows: 38px 1fr 22px 61px; }
+.attitude-panel { grid-template-rows: 38px 1fr 22px 88px; }
 .rocket-view, .map-view { min-height: 0; position: relative; background: var(--dark); overflow: hidden; }
 .rocket-view canvas, .map-view canvas { display: block; width: 100%; height: 100%; }
 .rocket-view.is-stale::after { content: "STALE"; position: absolute; inset: 0; display: grid; place-items: center; background: rgba(20,23,20,.42); color: rgba(255,255,255,.75); font-weight: 900; letter-spacing: .22em; font-size: 24px; pointer-events: none; }
 .view-status { height: 22px; padding: 0 10px; background: #232720; color: #adb5ad; display: flex; align-items: center; justify-content: space-between; font-size: 8px; font-weight: 750; letter-spacing: .06em; }
 .metric-strip { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); border-top: 1px solid var(--line); }
+.attitude-panel .metric-strip { grid-template-columns: repeat(4, minmax(0,1fr)); }
+.attitude-panel .metric:nth-child(-n+4) { border-bottom: 1px solid var(--line); }
+.attitude-panel .metric:nth-child(4n) { border-right: 0; }
 .metric { padding: 8px 9px; border-right: 1px solid var(--line); min-width: 0; }
 .metric:last-child { border-right: 0; }
 .metric span { display: block; color: var(--muted); font-size: 8px; font-weight: 750; letter-spacing: .09em; white-space: nowrap; }
@@ -93,7 +97,7 @@ button { cursor: pointer; }
 .state-summary.error { border-color: var(--red); color: var(--red); }
 .overview-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); margin: 0 12px 9px; border: 1px solid var(--line); }
 .overview-grid .metric:nth-child(3n) { border-right: 0; }
-.overview-grid .metric:nth-child(-n+6) { border-bottom: 1px solid var(--line); }
+.overview-grid .metric:nth-child(-n+9) { border-bottom: 1px solid var(--line); }
 .link-diagnostics { display: grid; grid-template-columns: repeat(4,1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); margin: 0 12px 9px; }
 .link-diagnostics > div { background: var(--panel); padding: 7px; }
 .link-diagnostics span { display: block; font-size: 7px; color: var(--muted); font-weight: 800; }

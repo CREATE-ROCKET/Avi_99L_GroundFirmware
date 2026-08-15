@@ -72,7 +72,8 @@
 - Fin Brake
 - Mission reset/recovery event
 - Control re-entry inhibited
-- Roll
+- Liftoff-relative roll (v1, unwrapped; v1 meaning unchanged)
+- Wrapped orientation (display-only derivative)
 - Roll rate
 - Tilt magnitude
 - Tilt direction
@@ -147,6 +148,19 @@
 - Request ID
 - XOR checksum
 
-## A7 ComBoardFallback
+## A7 ControlRollTelemetryV2
 
-Headerは予約済みだが、field layoutが現projectのsource basisでは確定していない。raw bytesだけを保存し、正式仕様なしに値を推測しない。
+- Schema version = 2
+- Control roll reference (signed unwrapped, 0.5 deg/LSB)
+- Roll deviation (signed unwrapped, 0.5 deg/LSB)
+- Corrective error (deviationの符号反転だけ。wrapしない)
+- Reference valid / capture event / Control active
+- Reference/deviation OUT_OF_RANGE
+- Capture event sequence
+- XOR checksum
+
+`+380 deg`はraw 760として保持し、`-20 deg`へ最短路化しない。既存v1 roll fieldをreference/deviationへ再解釈しない。
+
+## A8 MissionLinkFallbackTelemetry
+
+旧A7 fallbackとのheader衝突を解消したversion 1 fallback packet。MissionStateとcommunication modeを混同せず、schema、loss reason、age、last-known state/GNSS/power/CAN healthを別fieldとしてdecodeする。

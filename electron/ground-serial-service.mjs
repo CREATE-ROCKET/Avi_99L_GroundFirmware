@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { performance } from 'node:perf_hooks';
+import { decodeApplicationPacket, rollTelemetryExport } from '../shared/protocol.js';
 import { classifyUsbLine } from '../shared/usb-v1.js';
 import { UsbLineFramer } from '../shared/usb-line-framer.js';
 
@@ -193,6 +194,20 @@ export class GroundSerialService extends EventEmitter {
         hostUnixMs: receivedAt.hostUnixMs,
         hostMonotonicNs: receivedAt.hostMonotonicNs,
       });
+      if (classification.kind === 'record' && classification.record.type === 'RX'
+          && classification.record.valid) {
+        try {
+          const decoded = decodeApplicationPacket(
+            Uint8Array.from(classification.record.rawBytes));
+          if (decoded.lengthValid && decoded.checksumValid && decoded.contractValid) {
+            const rollExport = rollTelemetryExport(decoded, classification.record.seq);
+            if (rollExport) this.sessionWriter.appendRollTelemetry(rollExport);
+          }
+        } catch {
+          // Raw/session records remain authoritative; Renderer reports the same
+          // application decode mismatch through its existing audited path.
+        }
+      }
       if (classification.kind === 'parser-error') {
         this.sessionWriter.appendParserError(classification.error, event.line);
       }

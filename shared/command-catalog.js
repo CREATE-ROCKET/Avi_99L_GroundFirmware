@@ -16,7 +16,6 @@ export const GenericCommand = Object.freeze({
   PARA_CLOSE: 0x26,
   RUN_PREFLIGHT_CALIBRATION: 0x30,
   EXPORT_FLASH_LOG_TO_SD_AND_ERASE: 0x31,
-  SELECT_MOTOR_PROFILE: 0x32,
   ENTER_RECOVERY: 0x33,
 });
 
@@ -49,7 +48,6 @@ export const ACTIONS = Object.freeze({
   paraClose: { label: 'ParaClose', states: ['CommandReceive'] },
   runCalibration: { label: 'RunPreflightCalibration', states: ['CommandReceive'] },
   exportFlash: { label: 'ExportFlashLogToSdAndErase', states: ['CommandReceive'] },
-  selectMotorProfile: { label: 'SelectMotorProfile', states: ['CommandReceive'], needs: 'profile' },
   enterRecovery: { label: 'EnterRecovery', states: ['Descent'] },
   actuatorEmergency: { label: 'ActuatorEmergencyStop', states: ['CommandReceive'], emergency: true },
   liftoffEmergency: { label: 'LiftoffDetectionEmergencyStop', states: ['EngineBurn'], emergency: true },
@@ -125,7 +123,6 @@ export function buildCommand(action, options = {}) {
     case 'paraClose': return generic(GenericCommand.PARA_CLOSE);
     case 'runCalibration': return generic(GenericCommand.RUN_PREFLIGHT_CALIBRATION);
     case 'exportFlash': return generic(GenericCommand.EXPORT_FLASH_LOG_TO_SD_AND_ERASE);
-    case 'selectMotorProfile': return generic(GenericCommand.SELECT_MOTOR_PROFILE, [byte(Number(options.profile))]);
     case 'enterRecovery': return generic(GenericCommand.ENTER_RECOVERY);
     case 'actuatorEmergency': return 'ae';
     case 'liftoffEmergency': return 'le';

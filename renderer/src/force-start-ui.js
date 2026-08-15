@@ -107,10 +107,17 @@ export function createForceStartUi({ store, onForce }) {
     if (!panel || panel.querySelector('.start-gate-summary')) return;
     const bits = [5, 6, 7, 21, 16, 17, 18];
     const names = ['FIN ZERO', 'PARA OPEN', 'PARA CLOSE', 'MOTOR PROFILE', 'GYRO BIAS', 'GRAVITY REF', 'SSC ZERO'];
+    const values = bits.map((bit) => store.getLatestValue(`Command status.bit${bit}`)?.value);
+    const ready = values.every((value) => value === true);
+    const bigState = panel.querySelector('.big-state');
+    if (bigState) {
+      bigState.textContent = ready ? 'FLIGHT READY' : 'NOT READY';
+      bigState.classList.toggle('ok', ready);
+      bigState.classList.toggle('error', !ready);
+    }
     const summary = document.createElement('div');
     summary.className = 'start-gate-summary';
-    summary.innerHTML = bits.map((bit, index) => {
-      const value = store.getLatestValue(`Command status.bit${bit}`)?.value;
+    summary.innerHTML = values.map((value, index) => {
       const state = value === true ? 'READY' : value === false ? 'NOT SET' : 'UNKNOWN';
       const tone = value === true ? 'ok' : value === false ? 'error' : 'muted';
       return `<div><span>${names[index]}</span><strong class="${tone}">${state}</strong></div>`;

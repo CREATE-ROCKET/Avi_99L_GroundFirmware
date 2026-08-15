@@ -26,11 +26,11 @@ export function runSessionTests() {
     referenceOutOfRange: false, deviationOutOfRange: false, captureEventSequence: 17,
   });
   writer.appendConnectionEvent('disconnected');
-  const lines = fs.readFileSync(path.join(writer.directory, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  const lines = fs.readFileSync(path.join(writer.directory, 'events.jsonl'), 'utf8').trim().split(/\r?\n/).map(JSON.parse);
   assert.deepEqual(lines.slice(-4).map((event) => event.type),
     ['command', 'serial_line', 'roll_telemetry', 'connection']);
   assert.ok(lines.every((event) => typeof event.pcMonotonicNs === 'string'));
-  const rollLines = fs.readFileSync(path.join(writer.directory, 'roll-telemetry.csv'), 'utf8').trim().split('\n');
+  const rollLines = fs.readFileSync(path.join(writer.directory, 'roll-telemetry.csv'), 'utf8').trim().split(/\r?\n/);
   assert.equal(rollLines.length, 2);
   assert.match(rollLines[0], /wrapped_orientation_deg/);
   assert.match(rollLines[1], /0,VALID,380,VALID,-380,1,0,1,0,0,17$/);
@@ -47,8 +47,10 @@ export function runSessionTests() {
   writer.close();
   assert.equal(statuses.at(-1).healthy, false);
 
-  const bad = new SessionWriter({ baseDirectory: '/dev/null/not-a-directory', appVersion: 'test' });
+  const blocker = path.join(root, 'not-a-directory');
+  fs.writeFileSync(blocker, 'block');
+  const bad = new SessionWriter({ baseDirectory: path.join(blocker, 'child'), appVersion: 'test' });
   assert.doesNotThrow(() => bad.start());
   assert.equal(bad.status.healthy, false);
-  fs.rmSync(root, { recursive: true });
+  fs.rmSync(root, { recursive: true, force: true });
 }

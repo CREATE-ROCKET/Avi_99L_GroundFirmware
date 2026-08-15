@@ -11,7 +11,7 @@
 - longitude: `140.010450 deg`
 - area: launcher-centered `10 km x 10 km`
 - zoom: `14..17`
-- tile count: `2544`
+- requested tile count: `2544`
 - source: 国土地理院「全国最新写真（シームレス）」
 - tile URL: `https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg`
 
@@ -32,11 +32,18 @@ public/maps/gsi-seamlessphoto/
 └── 17/<x>/<y>.jpg
 ```
 
-既存tileはskipするため、中断後も同じcommandで再開できる。通信失敗はretryし、最終的に欠落tileが残った場合はnon-zeroで終了する。
+既存tileはskipするため、中断後も同じcommandで再開できる。通信失敗、HTTP 429、HTTP 5xx等はretryし、最終的に取得できないtileが残った場合だけnon-zeroで終了する。
+
+「全国最新写真（シームレス）」は空中写真のない海域等ではHTTP 404を返すことがある。これはdownload失敗ではなく`unavailable`として扱い、`.jpg.unavailable` markerを保存して次回実行時の無駄な再requestを避ける。再確認したい場合だけ`--refresh-unavailable`を指定する。
+
+```sh
+node scripts/download-offline-map.mjs --refresh-unavailable
+```
+
 serverへ過剰な負荷を与えないよう、default concurrencyは4に制限している。
 
 `vite.config.js`の`publicDir`により、developmentではこのdirectoryをそのまま配信し、`npm run build:renderer`では`dist/renderer/maps/gsi-seamlessphoto/`へcopyする。
-Rendererはこのlocal XYZ cacheを自動使用し、表示範囲に応じてz14..z17を動的に選択する。tileが存在しない範囲では従来のENU gridを維持し、`MAP TILE MISSING`を表示する。
+Rendererはこのlocal XYZ cacheを自動使用し、表示範囲に応じてz14..z17を動的に選択する。写真が存在しない範囲またはcacheが欠落した範囲では従来のENU gridを維持する。
 
 任意の範囲を取得する場合は次のように指定できる。
 

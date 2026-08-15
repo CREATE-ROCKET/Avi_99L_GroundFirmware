@@ -20,8 +20,9 @@ export class RocketViewV2 extends RocketView {
   }
 
   setInteractionEnabled(enabled) {
-    this.controls.enabled = true;
-    this.controls.enableRotate = Boolean(enabled);
+    const interactive = Boolean(enabled);
+    this.controls.enabled = interactive;
+    this.controls.enableRotate = interactive;
     this.controls.enablePan = false;
     this.controls.enableZoom = false;
   }

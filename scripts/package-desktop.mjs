@@ -17,11 +17,24 @@ function run(command, args, cwd) {
   if (result.status !== 0) throw new Error(`${command} exited with status ${result.status}`);
 }
 
+function runNpm(args, cwd) {
+  const npmExecPath = process.env.npm_execpath;
+  if (npmExecPath && fs.existsSync(npmExecPath)) {
+    run(process.execPath, [npmExecPath, ...args], cwd);
+    return;
+  }
+  if (process.platform === 'win32') {
+    run(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'npm', ...args], cwd);
+    return;
+  }
+  run('npm', args, cwd);
+}
+
 try {
   for (const relativePath of ['package.json', 'package-lock.json', 'dist', 'electron', 'shared']) {
     fs.cpSync(path.join(repository, relativePath), path.join(staging, relativePath), { recursive: true });
   }
-  run('npm', ['ci', '--omit=dev'], staging);
+  runNpm(['ci', '--omit=dev'], staging);
   const localBinding = path.join(
     staging,
     'node_modules',
@@ -31,9 +44,7 @@ try {
     'Release',
     'bindings.node',
   );
-  if (fs.existsSync(localBinding)) {
-    throw new Error('locally rebuilt serialport binding must not be packaged');
-  }
+  if (fs.existsSync(localBinding)) throw new Error('locally rebuilt serialport binding must not be packaged');
   const stagedPackagePath = path.join(staging, 'package.json');
   const stagedPackage = JSON.parse(fs.readFileSync(stagedPackagePath, 'utf8'));
   delete stagedPackage.build;
@@ -54,9 +65,7 @@ try {
     if (entry.isDirectory() && entry.name.endsWith('-unpacked')) {
       fs.rmSync(destination, { recursive: true, force: true });
       fs.cpSync(source, destination, { recursive: true });
-    } else if (entry.isFile()) {
-      fs.copyFileSync(source, destination);
-    }
+    } else if (entry.isFile()) fs.copyFileSync(source, destination);
   }
 } finally {
   fs.rmSync(staging, { recursive: true, force: true });

@@ -1,5 +1,5 @@
 import { TelemetryStore as BaseTelemetryStore } from './store.js';
-import { fieldMap, PacketHeader } from '../../shared/protocol.js';
+import { decodeApplicationPacket, fieldMap, PacketHeader } from '../../shared/protocol.js';
 
 const MISSION_STATES = new Set(['CommandReceive', 'LiftoffDetection', 'EngineBurn', 'Control', 'Descent']);
 const LONG_HISTORY_LIMIT = 100000;
@@ -38,6 +38,7 @@ export class TelemetryStore extends BaseTelemetryStore {
     this.lastExpectedIntervalMs = null;
     this.allRunSystemHistory = [];
     this.descentHistory = [];
+    this.forcedStartCompleted = false;
   }
 
   clearCurrentTelemetry() {
@@ -46,6 +47,38 @@ export class TelemetryStore extends BaseTelemetryStore {
     this.lastKnownMissionState = null;
     this.lastExpectedRxHostMs = null;
     this.lastExpectedIntervalMs = null;
+    // forcedStartCompleted is session-local audit state. USB reconnect must not
+    // erase the warning after a successful ForceStartSequence.
+  }
+
+  ingestRx(record, hostMs = Date.now(), monitorEntry = null) {
+    super.ingestRx(record, hostMs, monitorEntry);
+    if (!record?.valid || record.header !== PacketHeader.COMMAND_RESULT) return;
+    try {
+      const decoded = decodeApplicationPacket(Uint8Array.from(record.rawBytes));
+      if (!decoded.lengthValid || !decoded.checksumValid || !decoded.contractValid) return;
+      const fields = fieldMap(decoded);
+      const result = {
+        transactionId: fields.transactionId.raw,
+        command: fields.command.raw,
+        phase: fields.phase.raw,
+        reason: fields.reason.raw,
+        detail: fields.detail.raw >>> 0,
+      };
+      const entry = this.commandTracker.byTransaction.get(result.transactionId) ?? null;
+      const matched = Boolean(entry && entry.description?.expectedResultCommand === result.command);
+      if (matched && result.command === 0x04 && result.phase === 1 && !this.forcedStartCompleted) {
+        this.forcedStartCompleted = true;
+        this.addEvent('FORCED START / PREFLIGHT BYPASSED', 'warn', {
+          transactionId: result.transactionId,
+          command: result.command,
+        });
+      }
+      this.notify('command-result', { matched, entry, result });
+    } catch {
+      // Base store already records malformed application packets. Do not create
+      // a second synthetic command result when the packet cannot be decoded.
+    }
   }
 
   ingestDecoded(decoded, metadata = {}) {

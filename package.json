@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "description": "99L rocket ground station for Windows and Linux",
-  "main": "electron/main.mjs",
+  "author": "CREATE-ROCKET",
+  "main": "electron/main-v2.mjs",
   "scripts": {
     "dev": "concurrently -k \"vite --config vite.config.js\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "dev:renderer": "vite --config vite.config.js",

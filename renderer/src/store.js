@@ -13,6 +13,16 @@ const MAX_PACKET_MONITOR = 1000;
 const MAX_LATENCY_SAMPLES = 2048;
 const MAX_HISTORY_SAMPLES = 1000;
 
+const PARACHUTE_FAILURE_NAMES = [
+  'None',
+  'OpenNotConfigured',
+  'CurrentAngleUnavailable',
+  'AmbiguousHalfTurn',
+  'MoveCommandFailed',
+  'RetryExhausted',
+  'HoldFailed',
+];
+
 function pushBounded(target, value, limit = MAX_HISTORY_SAMPLES) {
   target.push(value);
   if (target.length > limit) target.shift();
@@ -30,12 +40,21 @@ function booleanField(map, key) {
   return typeof value === 'boolean' ? value : null;
 }
 
+function aliasField(map, sourceKey, targetKey, overrides = {}) {
+  const source = map[sourceKey];
+  if (!source) return null;
+  const alias = { ...source, key: targetKey, ...overrides };
+  map[targetKey] = alias;
+  return alias;
+}
+
 export class TelemetryStore extends EventTarget {
   constructor() {
     super();
     this.sessionStartedAt = performance.now();
     this.sessionStartedHostMs = Date.now();
     this.state = 'UNKNOWN';
+    this.lastKnownMissionState = null;
     this.communicationMode = 'Normal';
     this.connection = { connected: false, path: null };
     this.latestByPacket = new Map();
@@ -123,6 +142,7 @@ export class TelemetryStore extends EventTarget {
 
   clearCurrentTelemetry() {
     this.state = 'UNKNOWN';
+    this.lastKnownMissionState = null;
     this.communicationMode = 'Normal';
     this.latestByPacket.clear();
     this.latestValues.clear();
@@ -331,6 +351,96 @@ export class TelemetryStore extends EventTarget {
     }
   }
 
+  normalizeDecodedFields(decoded, map, hostMs) {
+    if (decoded.header === PacketHeader.MISSION_LINK_FALLBACK_TELEMETRY) {
+      aliasField(map, 'fallbackLastMissionState', 'lastMissionState');
+      aliasField(map, 'fallbackMissionStatusAge', 'missionStatusAge');
+      aliasField(map, 'fallbackMissionPeriodicAge', 'anyMissionCanAge');
+      aliasField(map, 'fallbackPowerTimeAge', 'powerTimeAge');
+      aliasField(map, 'fallbackGnssState', 'gnssState');
+      aliasField(map, 'fallbackCanHealth', 'canHealth');
+      aliasField(map, 'fallbackEast', 'east');
+      aliasField(map, 'fallbackNorth', 'north');
+      aliasField(map, 'fallbackHeight', 'height');
+      const logic = map.fallbackLogicVoltage;
+      if (logic) aliasField(map, 'fallbackLogicVoltage', 'logicVoltage', {
+        status: logic.status === 'VALID' ? 'LAST_KNOWN' : logic.status,
+      });
+      const motor = map.fallbackMotorVoltage;
+      if (motor) aliasField(map, 'fallbackMotorVoltage', 'motorVoltage', {
+        status: motor.status === 'VALID' ? 'LAST_KNOWN' : motor.status,
+      });
+      const flags = map.fallbackStatusFlagsRaw?.raw;
+      if (Number.isInteger(flags)) {
+        for (let bit = 0; bit <= 14; bit += 1) {
+          map[`Fallback status.bit${bit}`] = {
+            key: `Fallback status.bit${bit}`,
+            label: `Fallback status bit ${bit}`,
+            group: 'Fallback status',
+            raw: (flags >> bit) & 1,
+            value: Boolean((flags >> bit) & 1),
+            unit: '',
+            status: 'VALID',
+          };
+        }
+      }
+      const reason = map.fallbackReason;
+      const age = map.missionStatusAge;
+      if (reason?.raw === 7 && age?.status === 'VALID'
+          && age.value >= 0.3 && age.value < 1.0) {
+        map.fallbackReason = { ...reason, value: 'MISSION STATUS LATE' };
+      }
+    }
+
+    if (decoded.header === PacketHeader.DESCENT) {
+      const status = map.descentStatusRaw?.raw;
+      if (Number.isInteger(status)) {
+        // 最新Vaultではbit0..3=failure code、bit4=persistence corrupt、bit5..12=reserved。
+        for (let bit = 0; bit <= 12; bit += 1) {
+          delete map[`Descent status.bit${bit}`];
+          this.latestFieldByKey.delete(`Descent status.bit${bit}`);
+        }
+        const failure = status & 0x0f;
+        map.parachuteDeploymentFailure = {
+          key: 'parachuteDeploymentFailure',
+          label: 'Parachute deployment failure',
+          group: 'Parachute',
+          raw: failure,
+          value: PARACHUTE_FAILURE_NAMES[failure] ?? `RESERVED_${failure}`,
+          unit: '',
+          status: failure <= 6 ? 'VALID' : 'RESERVED',
+        };
+        map.parachutePersistenceCorrupt = {
+          key: 'parachutePersistenceCorrupt',
+          label: 'Parachute persistence corrupt',
+          group: 'Parachute',
+          raw: (status >> 4) & 1,
+          value: Boolean(status & 0x10),
+          unit: '',
+          status: 'VALID',
+        };
+        map.descentReservedStatus = {
+          key: 'descentReservedStatus',
+          label: 'Descent reserved status bits',
+          group: 'Protocol',
+          raw: status & 0x1fe0,
+          value: status & 0x1fe0,
+          unit: '',
+          status: (status & 0x1fe0) === 0 ? 'VALID' : 'RESERVED_NONZERO',
+        };
+      }
+    }
+
+    for (const item of Object.values(map)) {
+      if (!item?.key) continue;
+      const latestItem = { ...item, packetName: decoded.packetName, hostMs };
+      this.latestFieldByKey.set(item.key, latestItem);
+      if (!this.latestValues.has(`${decoded.packetName}.${item.key}`)) {
+        this.latestValues.set(`${decoded.packetName}.${item.key}`, latestItem);
+      }
+    }
+  }
+
   ingestDecoded(decoded, metadata = {}) {
     const hostMs = metadata.hostMs ?? Date.now();
     const map = fieldMap(decoded);
@@ -342,18 +452,31 @@ export class TelemetryStore extends EventTarget {
       this.latestValues.set(`${decoded.packetName}.${item.key}`, latestItem);
       this.latestFieldByKey.set(item.key, latestItem);
     }
+    this.normalizeDecodedFields(decoded, map, hostMs);
 
-    if (decoded.communicationMode === 'MissionLinkFallback') {
-      // A8はMissionStateではない。Vaultどおりcurrent stateをUNKNOWNへ落とす。
+    if (decoded.header === PacketHeader.MISSION_LINK_FALLBACK_TELEMETRY) {
+      // A8はMissionStateではない。current stateをUNKNOWNへ落とし、last-knownを別表示する。
+      const last = map.lastMissionState?.value;
+      if (typeof last === 'string' && !['NEVER_RECEIVED', 'RESERVED'].includes(last)) {
+        this.lastKnownMissionState = last;
+      }
       this.state = 'UNKNOWN';
-    } else if (decoded.missionState) {
-      this.state = decoded.missionState;
-    }
-    if (decoded.communicationMode) {
-      this.communicationMode = decoded.communicationMode;
-    } else if (decoded.header >= PacketHeader.COMMAND_RECEIVE
-        && decoded.header <= PacketHeader.RECOVERY_LOG_DATA) {
-      this.communicationMode = 'Normal';
+      this.communicationMode = 'MissionLinkFallback';
+    } else if (decoded.header === PacketHeader.RECOVERY_BEACON) {
+      // A5はcommunication/power modeでありMissionStateではない。
+      this.communicationMode = 'RecoveryBeacon';
+      if (this.state === 'RecoveryBeacon') this.state = this.lastKnownMissionState ?? 'UNKNOWN';
+    } else {
+      if (decoded.missionState) {
+        this.state = decoded.missionState;
+        this.lastKnownMissionState = decoded.missionState;
+      }
+      if (decoded.communicationMode) {
+        this.communicationMode = decoded.communicationMode;
+      } else if (decoded.header >= PacketHeader.COMMAND_RECEIVE
+          && decoded.header <= PacketHeader.DESCENT) {
+        this.communicationMode = 'Normal';
+      }
     }
 
     const periodic = (decoded.header >= PacketHeader.COMMAND_RECEIVE

@@ -87,7 +87,10 @@ export function isActionAvailable(action, missionState, communicationMode = 'Nor
   const spec = ACTIONS[action];
   if (!spec) return false;
   if (spec.local) return !spec.communicationModes || spec.communicationModes.includes(communicationMode);
-  if (communicationMode === 'MissionLinkFallback') return Boolean(spec.emergency && spec.states.includes(missionState));
+  if (communicationMode === 'MissionLinkFallback') {
+    return Boolean(spec.emergency && spec.states.includes(missionState));
+  }
+  if (communicationMode !== 'Normal') return false;
   return spec.states.includes(missionState);
 }
 

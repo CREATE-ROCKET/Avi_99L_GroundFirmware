@@ -17,11 +17,27 @@ function run(command, args, cwd) {
   if (result.status !== 0) throw new Error(`${command} exited with status ${result.status}`);
 }
 
+function runNpm(args, cwd) {
+  // npm scripts expose the exact npm CLI JS path. Invoking it with the current
+  // Node executable works on Windows and POSIX and avoids the npm vs npm.cmd
+  // executable-name difference in spawnSync.
+  const npmExecPath = process.env.npm_execpath;
+  if (npmExecPath && fs.existsSync(npmExecPath)) {
+    run(process.execPath, [npmExecPath, ...args], cwd);
+    return;
+  }
+  if (process.platform === 'win32') {
+    run(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'npm', ...args], cwd);
+    return;
+  }
+  run('npm', args, cwd);
+}
+
 try {
   for (const relativePath of ['package.json', 'package-lock.json', 'dist', 'electron', 'shared']) {
     fs.cpSync(path.join(repository, relativePath), path.join(staging, relativePath), { recursive: true });
   }
-  run('npm', ['ci', '--omit=dev'], staging);
+  runNpm(['ci', '--omit=dev'], staging);
   const localBinding = path.join(
     staging,
     'node_modules',

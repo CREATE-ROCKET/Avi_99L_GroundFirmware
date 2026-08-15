@@ -111,9 +111,9 @@ export function runProtocolTests() {
     PacketHeader.COMMAND_RESULT);
 
   assert.equal(CONTROL_ROLL_TELEMETRY_V2_VAULT_SOURCE,
-    'f789fdef395c7b066d838a8f566ea4984231ab34');
+    '2a6fa974a9b7a50a9b9d574174262068e2e5b8bf');
   const controlVectors = readControlRollVectors();
-  assert.equal(controlVectors.length, 8);
+  assert.equal(controlVectors.length, 9);
   for (const vector of controlVectors) {
     const bytes = bytesFromHex(vector.rawHex);
     const decoded = decodeApplicationPacket(bytes);

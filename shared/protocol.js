@@ -20,7 +20,7 @@ export const PacketHeader = Object.freeze({
 
 export const CONTROL_ROLL_TELEMETRY_V2_SCHEMA_VERSION = 2;
 export const CONTROL_ROLL_TELEMETRY_V2_VAULT_SOURCE =
-  'f789fdef395c7b066d838a8f566ea4984231ab34';
+  '2a6fa974a9b7a50a9b9d574174262068e2e5b8bf';
 
 export const packetNames = Object.freeze({
   [PacketHeader.COMMAND_RECEIVE]: 'CommandReceive',

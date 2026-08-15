@@ -2,7 +2,7 @@
 
 99L向けのWindows/Linux Ground Station prototypeです。`CREATE-ROCKET/Avi_tenkatenn_board`のUSB line protocolと、Vaultで定義した99L LoRa application packetを入力として扱います。
 
-Control roll protocol sourceはVault commit `f789fdef395c7b066d838a8f566ea4984231ab34`に固定しています。A7は`ControlRollTelemetryV2`、Mission link fallbackはA8です。
+Control roll protocol sourceはVault commit `2a6fa974a9b7a50a9b9d574174262068e2e5b8bf`に固定しています。A7は`ControlRollTelemetryV2`、Mission link fallbackはA8です。
 
 本projectはまず、デザイン確定より先に以下を検証することを目的とします。
 

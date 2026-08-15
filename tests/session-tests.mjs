@@ -37,7 +37,7 @@ export function runSessionTests() {
   const session = JSON.parse(fs.readFileSync(path.join(writer.directory, 'session.json'), 'utf8'));
   assert.equal(session.schema, 2);
   assert.equal(session.controlRollTelemetryV2VaultSource,
-    'f789fdef395c7b066d838a8f566ea4984231ab34');
+    '2a6fa974a9b7a50a9b9d574174262068e2e5b8bf');
 
   const closedFd = writer.eventsFd;
   fs.closeSync(closedFd);

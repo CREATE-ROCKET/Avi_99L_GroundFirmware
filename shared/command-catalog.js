@@ -74,6 +74,12 @@ function local(code, args = []) {
   return ['local', byte(code), ...args.map(byte)].join(' ');
 }
 
+function encodeDirection(direction) {
+  if (direction === 'CW') return 0x01;
+  if (direction === 'CCW') return 0xFF;
+  throw new RangeError('parachute direction must be CW or CCW');
+}
+
 export function encodeSignedTenths(degrees) {
   const value = Number(degrees);
   if (!Number.isFinite(value)) throw new TypeError('angle must be finite');
@@ -110,8 +116,8 @@ export function buildCommand(action, options = {}) {
       if (!Number.isFinite(angle) || Math.abs(angle) >= 180) throw new RangeError('parachute relative move must be < 180 deg');
       return generic(GenericCommand.PARA_MOVE_RELATIVE, encodeSignedTenths(angle));
     }
-    case 'setParaOpen': return generic(GenericCommand.SET_PARA_OPEN, [options.direction === 'CCW' ? 0xFF : 0x01]);
-    case 'setParaClose': return generic(GenericCommand.SET_PARA_CLOSE, [options.direction === 'CCW' ? 0xFF : 0x01]);
+    case 'setParaOpen': return generic(GenericCommand.SET_PARA_OPEN, [encodeDirection(options.direction)]);
+    case 'setParaClose': return generic(GenericCommand.SET_PARA_CLOSE, [encodeDirection(options.direction)]);
     case 'paraOpen': return generic(GenericCommand.PARA_OPEN);
     case 'paraClose': return generic(GenericCommand.PARA_CLOSE);
     case 'runCalibration': return generic(GenericCommand.RUN_PREFLIGHT_CALIBRATION);

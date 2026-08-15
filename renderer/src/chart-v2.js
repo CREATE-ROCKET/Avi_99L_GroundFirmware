@@ -59,9 +59,12 @@ export class SharedTrackChart {
     this.getData = options.getData;
     this.tracks = options.tracks ?? [];
     this.markers = options.markers ?? [];
-    this.canvas = document.createElement('canvas');
-    this.canvas.className = 'chart-canvas';
-    this.host.appendChild(this.canvas);
+    this.canvas = this.host.querySelector(':scope > canvas.chart-canvas');
+    if (!this.canvas) {
+      this.canvas = document.createElement('canvas');
+      this.canvas.className = 'chart-canvas';
+      this.host.appendChild(this.canvas);
+    }
     this.context = this.canvas.getContext('2d');
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(host);

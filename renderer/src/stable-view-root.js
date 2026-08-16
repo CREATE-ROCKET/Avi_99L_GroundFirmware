@@ -1,3 +1,5 @@
+import { enuToLatLon } from '../../shared/offline-map.js';
+
 const innerHtmlDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
 const PRESERVED_VISUAL_HOST_IDS = Object.freeze([
   'rocket-host',
@@ -6,6 +8,7 @@ const PRESERVED_VISUAL_HOST_IDS = Object.freeze([
   'descent-chart-host',
   'system-chart-host',
 ]);
+const METERS_VALUE_PATTERN = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*m$/i;
 
 function syncAttributes(current, replacement) {
   for (const attribute of [...current.attributes]) {
@@ -15,6 +18,42 @@ function syncAttributes(current, replacement) {
     if (current.getAttribute(attribute.name) !== attribute.value) {
       current.setAttribute(attribute.name, attribute.value);
     }
+  }
+}
+
+function readMetricMeters(card) {
+  const text = card?.querySelector('strong')?.textContent?.trim() ?? '';
+  const match = text.match(METERS_VALUE_PATTERN);
+  if (!match) return null;
+  const value = Number.parseFloat(match[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function rewritePositionMetrics(root) {
+  for (const grid of root.querySelectorAll('.metric-grid')) {
+    const cards = [...grid.children].filter((node) => node.classList?.contains('metric-card'));
+    const eastCard = cards.find((card) => card.querySelector('span')?.textContent?.trim() === 'EAST');
+    const northCard = cards.find((card) => card.querySelector('span')?.textContent?.trim() === 'NORTH');
+    if (!eastCard || !northCard) continue;
+
+    const eastMeters = readMetricMeters(eastCard);
+    const northMeters = readMetricMeters(northCard);
+    const eastLabel = eastCard.querySelector('span');
+    const northLabel = northCard.querySelector('span');
+    if (eastLabel) eastLabel.textContent = 'LONGITUDE';
+    if (northLabel) northLabel.textContent = 'LATITUDE';
+
+    // wire上は発射点基準ENU[m]なので、既存の地図変換と同じ基準で緯度経度へ戻す。
+    if (eastMeters !== null && northMeters !== null) {
+      const { lat, lon } = enuToLatLon(eastMeters, northMeters);
+      const eastValue = eastCard.querySelector('strong');
+      const northValue = northCard.querySelector('strong');
+      if (eastValue) eastValue.textContent = `${lon.toFixed(6)}°`;
+      if (northValue) northValue.textContent = `${lat.toFixed(6)}°`;
+    }
+
+    // 表示順も「緯度→経度」に統一する。
+    if (eastCard.previousElementSibling !== northCard) grid.insertBefore(northCard, eastCard);
   }
 }
 
@@ -39,6 +78,7 @@ if (innerHtmlDescriptor?.get && innerHtmlDescriptor?.set) {
       }
 
       innerHtmlDescriptor.set.call(this, value);
+      rewritePositionMetrics(this);
 
       for (const [id, node] of preserved) {
         const replacement = this.querySelector(`#${id}`);

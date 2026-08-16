@@ -219,7 +219,7 @@ function bindDrawerUi() {
   document.querySelectorAll('[data-data-tab]').forEach((button) => button.addEventListener('click', () => { dataTab = button.dataset.dataTab; renderDrawers(); bindDrawerUi(); }));
   document.querySelectorAll('[data-ui="data-close"]').forEach((button) => button.addEventListener('click', () => { dataOpen = false; dataDrawer.classList.remove('open'); }));
   if (!DEV_MODE) return;
-  document.querySelectorAll('[data-ui="dev-close"]').forEach((button) => button.addEventListener('click', () => { devOpen = false; renderDrawers(); bindDrawerUi(); }));
+  document.querySelectorAll('[data-ui="dev-close"]').forEach((button) => button.addEventListener('click', () => { devOpen = false; devDrawer.classList.remove('open'); }));
   document.querySelectorAll('[data-ui="synthetic-toggle"]').forEach((button) => button.addEventListener('click', toggleSynthetic));
   document.querySelectorAll('[data-ui="liftoff-test"]').forEach((button) => button.addEventListener('click', () => triggerLiftoff({ source: 'MANUAL DEV TEST' })));
   const form = document.querySelector('#dev-console-form');

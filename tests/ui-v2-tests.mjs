@@ -64,6 +64,7 @@ export function runUiV2Tests() {
   assert.equal(buildCommand('liftoffEmergency'), 'le');
   assert.equal(buildCommand('startLogging'), 'local 108');
   assert.equal(buildCommand('wakeMission'), 'local 119');
+  assert.equal(buildCommand('exitRecovery'), 'local 101');
   assert.equal(isActionAvailable('startSequence', 'Control', 'Normal'), false);
   assert.equal(isActionAvailable('forceStartSequence', 'CommandReceive', 'Normal'), true);
   assert.equal(isActionAvailable('forceStartSequence', 'EngineBurn', 'Normal'), false);
@@ -71,6 +72,8 @@ export function runUiV2Tests() {
   assert.equal(isActionAvailable('selectMotorProfile', 'CommandReceive', 'Normal'), false);
   assert.equal(isActionAvailable('wakeMission', 'Descent', 'Normal'), false);
   assert.equal(isActionAvailable('wakeMission', 'Descent', 'RecoveryBeacon'), true);
+  assert.equal(isActionAvailable('exitRecovery', 'Descent', 'RecoveryBeacon'), true);
+  assert.equal(isActionAvailable('exitRecovery', 'Descent', 'MissionLinkFallback'), false);
   assert.equal(isActionAvailable('dumpMissionSd', 'Control', 'MissionLinkFallback'), true);
   assert.throws(() => buildCommand('selectMotorProfile', { profile: 1 }), /unknown action/);
   assert.throws(() => buildCommand('paraMoveRelative', { angle: 180 }), /< 180/);

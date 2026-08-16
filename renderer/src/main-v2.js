@@ -277,6 +277,9 @@ async function dispatchAction(name, options = {}) {
     return;
   }
   try {
+    if (name === 'exitRecovery' &&
+        !window.confirm('Exit Recovery, clear the Mission Recovery latch, and reboot Mission into CommandReceive?'))
+      return;
     if (name === 'finMoveRelative' && options.angle === undefined) options.angle = Number(document.querySelector('#fin-relative')?.value ?? 0);
     if (name === 'paraMoveRelative' && options.angle === undefined) options.angle = Number(document.querySelector('#para-relative')?.value ?? 0);
     await sendCommand(buildCommand(name, options));

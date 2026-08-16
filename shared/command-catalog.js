@@ -28,6 +28,7 @@ export const LocalCommand = Object.freeze({
   DUMP_INTERNAL_FLASH: 'f'.charCodeAt(0),
   DUMP_MISSION_SD: 's'.charCodeAt(0),
   STOP_LOG_DUMP: 'x'.charCodeAt(0),
+  EXIT_RECOVERY: 'e'.charCodeAt(0),
 });
 
 export const ACTIONS = Object.freeze({
@@ -59,6 +60,7 @@ export const ACTIONS = Object.freeze({
   dumpInternalFlash: { label: 'ComBoard Dump Internal Flash', local: true, communicationModes: ['RecoveryBeacon', 'MissionLinkFallback'] },
   dumpMissionSd: { label: 'ComBoard Dump Mission SD', local: true, communicationModes: ['RecoveryBeacon', 'MissionLinkFallback'] },
   stopLogDump: { label: 'ComBoard Stop Log Dump', local: true, communicationModes: ['RecoveryBeacon', 'MissionLinkFallback'] },
+  exitRecovery: { label: 'Exit Recovery', local: true, communicationModes: ['RecoveryBeacon'] },
 });
 
 function byte(value) {
@@ -128,6 +130,7 @@ export function buildCommand(action, options = {}) {
     case 'dumpInternalFlash': return local(LocalCommand.DUMP_INTERNAL_FLASH);
     case 'dumpMissionSd': return local(LocalCommand.DUMP_MISSION_SD);
     case 'stopLogDump': return local(LocalCommand.STOP_LOG_DUMP);
+    case 'exitRecovery': return local(LocalCommand.EXIT_RECOVERY);
     default: throw new Error(`unknown action: ${action}`);
   }
 }

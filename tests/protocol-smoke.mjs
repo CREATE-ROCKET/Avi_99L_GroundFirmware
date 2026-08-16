@@ -81,6 +81,7 @@ export function runProtocolTests() {
   assert.equal(a0.paraMode.raw, 1);
   assert.equal(a0.airspeed.status, 'SSC_NOT_INITIALIZED');
   assert.equal(a0.east.status, 'NO_FIX');
+  assert.equal(a0.displayRoll.value, 30);
 
   assert.equal(parsed.get('RX_A0_BAD_CHECKSUM').valid, false);
   assert.equal(parsed.get('RX_A0_RSSI_ABSENT').rssiRaw, null);
@@ -99,7 +100,7 @@ export function runProtocolTests() {
   expectError(rx.replace('usb_v=1', 'usb_v=2'), UsbV1ParseErrorCode.VERSION_UNSUPPORTED);
   expectError(rx.replace('seq=1', 'seq=4294967296'), UsbV1ParseErrorCode.INVALID_VALUE);
   expectError(rx.replace('raw=A0', 'raw=a0'), UsbV1ParseErrorCode.INVALID_HEX);
-  expectError(rx.replace('len=22', 'len=21'), UsbV1ParseErrorCode.LENGTH_MISMATCH);
+  expectError(rx.replace('len=24', 'len=23'), UsbV1ParseErrorCode.LENGTH_MISMATCH);
   expectError(rx.replace('raw=A0', 'raw=A1'), UsbV1ParseErrorCode.HEADER_MISMATCH);
   expectError(rx.replace('rssi_dbm=-84', 'rssi_dbm=-85'), UsbV1ParseErrorCode.RSSI_MISMATCH);
   expectError(rx.replace('@RX', '@UNKNOWN'), UsbV1ParseErrorCode.UNKNOWN_RECORD);

@@ -16,6 +16,8 @@ export function runUiV2Tests() {
   assert.equal(store.state, 'CommandReceive');
   assert.equal(store.communicationMode, 'Normal');
   assert.equal(store.lastKnownMissionState, 'CommandReceive');
+  assert.equal(store.attitudeSamples.length, 1);
+  assert.equal(store.attitudeSamples.at(-1).roll, 30);
 
   const commandOverview = createScreenRenderer({ store }).screen('overview');
   for (const readinessLabel of [
@@ -37,12 +39,21 @@ export function runUiV2Tests() {
   assert.equal(store.getLatestValue('missionStatusAge').value, 1.0);
   assert.equal(store.getLatestValue('logicVoltage').status, 'LAST_KNOWN');
   assert.equal(typeof store.getLatestValue('Fallback status.bit4').value, 'boolean');
+  assert.equal(store.attitudeSamples.length, 0);
 
   // One valid MissionStatus-bearing state packet immediately restores Normal.
   store.ingestLineRecord(envelope(vectors.get('RX_A1_VALID'), 2000));
   assert.equal(store.state, 'LiftoffDetection');
   assert.equal(store.communicationMode, 'Normal');
   assert.equal(store.lastKnownMissionState, 'LiftoffDetection');
+  assert.equal(store.attitudeSamples.length, 1);
+
+  // Ground board BOOT/reconnectで旧sessionの姿勢を残さない。
+  const resetAttitudeStore = new TelemetryStore();
+  resetAttitudeStore.ingestLineRecord(envelope(vectors.get('RX_A0_VALID'), 1000));
+  assert.equal(resetAttitudeStore.attitudeSamples.length, 1);
+  resetAttitudeStore.ingestLineRecord(envelope(vectors.get('SYS_BOOT'), 1100));
+  assert.equal(resetAttitudeStore.attitudeSamples.length, 0);
 
   // RecoveryBeacon is a communication mode and must not become a MissionState.
   const recoveryStore = new TelemetryStore();
@@ -51,6 +62,7 @@ export function runUiV2Tests() {
   assert.equal(recoveryStore.state, 'Descent');
   assert.equal(recoveryStore.communicationMode, 'RecoveryBeacon');
   assert.equal(recoveryStore.estimatedMissed, 0);
+  assert.equal(recoveryStore.attitudeSamples.length, 0);
 
   assert.deepEqual(encodeSignedTenths(-12.3), [0x85, 0xff]);
   assert.equal(buildCommand('startSequence'), 'g 0x01');

@@ -279,9 +279,6 @@ async function dispatchAction(name, options = {}) {
   try {
     if (name === 'finMoveRelative' && options.angle === undefined) options.angle = Number(document.querySelector('#fin-relative')?.value ?? 0);
     if (name === 'paraMoveRelative' && options.angle === undefined) options.angle = Number(document.querySelector('#para-relative')?.value ?? 0);
-    if (name === 'setParaOpen' && options.direction === undefined) options.direction = document.querySelector('#para-open-dir')?.value ?? 'CW';
-    if (name === 'setParaClose' && options.direction === undefined) options.direction = document.querySelector('#para-close-dir')?.value ?? 'CW';
-    if (name === 'selectMotorProfile' && options.profile === undefined) options.profile = Number(document.querySelector('#motor-profile')?.value ?? 0);
     await sendCommand(buildCommand(name, options));
   } catch (error) {
     showToast(`COMMAND ERROR / ${error.message}`);

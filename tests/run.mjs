@@ -1,3 +1,4 @@
+import { runCommandAckTests } from './command-ack-tests.mjs';
 import { runFramerTests } from './framer-tests.mjs';
 import { runOfflineMapTests } from './offline-map-tests.mjs';
 import { runProtocolTests } from './protocol-smoke.mjs';
@@ -10,9 +11,10 @@ import { runUiV2Tests } from './ui-v2-tests.mjs';
 const vectorCount = runProtocolTests();
 runFramerTests();
 runOfflineMapTests();
+runCommandAckTests();
 runStoreAndLifecycleTests();
 runUiV2Tests();
 runSharedWireGoldenTests();
 runSessionTests();
 await runServiceTests();
-console.log(`USB v1 tests: ${vectorCount} golden vectors, shared wire, offline map, UI v2, and host checks passed`);
+console.log(`USB v1 tests: ${vectorCount} golden vectors, shared wire, command ACK, offline map, UI v2, and host checks passed`);

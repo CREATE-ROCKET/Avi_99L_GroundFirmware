@@ -219,7 +219,7 @@ function bindDrawerUi() {
   document.querySelectorAll('[data-data-tab]').forEach((button) => button.addEventListener('click', () => { dataTab = button.dataset.dataTab; renderDrawers(); bindDrawerUi(); }));
   document.querySelectorAll('[data-ui="data-close"]').forEach((button) => button.addEventListener('click', () => { dataOpen = false; dataDrawer.classList.remove('open'); }));
   if (!DEV_MODE) return;
-  document.querySelectorAll('[data-ui="dev-close"]').forEach((button) => button.addEventListener('click', () => { devOpen = false; devDrawer.classList.remove('open'); }));
+  document.querySelectorAll('[data-ui="dev-close"]').forEach((button) => button.addEventListener('click', () => { devOpen = false; renderDrawers(); bindDrawerUi(); }));
   document.querySelectorAll('[data-ui="synthetic-toggle"]').forEach((button) => button.addEventListener('click', toggleSynthetic));
   document.querySelectorAll('[data-ui="liftoff-test"]').forEach((button) => button.addEventListener('click', () => triggerLiftoff({ source: 'MANUAL DEV TEST' })));
   const form = document.querySelector('#dev-console-form');
@@ -262,7 +262,7 @@ async function sendCommand(line) {
     tracked = store.queueOutboundCommand(normalized);
     const result = window.groundApi ? await window.groundApi.sendCommand(normalized) : null;
     store.markCommandUsbWritten(tracked.localId, result?.localId ?? tracked.localId);
-    showToast(`SENT / ${normalized}`);
+    showToast(`USB WRITTEN / ${normalized}`);
   } catch (error) {
     if (tracked) store.markCommandUsbWriteFailed(tracked.localId, error.message);
     store.addEvent(`TX FAILED / ${error.message}`, 'error');
@@ -347,7 +347,13 @@ async function maybeReplyGroundTime() {
 
 store.addEventListener('update', () => { scheduleRender(); void maybeReplyGroundTime(); });
 store.addEventListener('liftoff', (event) => triggerLiftoff(event.detail));
-store.addEventListener('command-result', (event) => forceStartUi.handleCommandResult(event.detail));
+store.addEventListener('command-result', (event) => {
+  forceStartUi.handleCommandResult(event.detail);
+  const { matched, result } = event.detail ?? {};
+  if (matched && result?.phase === 0 && result.reason === 0) {
+    showToast(`ACK / id=${result.transactionId} command=0x${result.command.toString(16).padStart(2, '0').toUpperCase()}`);
+  }
+});
 store.addEventListener('app-decode-mismatch', (event) => { if (window.groundApi) window.groundApi.recordAppDecodeMismatch(event.detail); });
 
 document.querySelector('#refresh-ports').addEventListener('click', refreshPorts);

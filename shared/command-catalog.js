@@ -42,8 +42,8 @@ export const ACTIONS = Object.freeze({
   paraFree: { label: 'ParaFree', states: ['CommandReceive'] },
   paraHold: { label: 'ParaHold', states: ['CommandReceive'] },
   paraMoveRelative: { label: 'ParaMoveRelative', states: ['CommandReceive'], needs: 'angle' },
-  setParaOpen: { label: 'SetParaOpen', states: ['CommandReceive'], needs: 'direction' },
-  setParaClose: { label: 'SetParaClose', states: ['CommandReceive'], needs: 'direction' },
+  setParaOpen: { label: 'SetParaOpen', states: ['CommandReceive'] },
+  setParaClose: { label: 'SetParaClose', states: ['CommandReceive'] },
   paraOpen: { label: 'ParaOpen', states: ['CommandReceive'] },
   paraClose: { label: 'ParaClose', states: ['CommandReceive'] },
   runCalibration: { label: 'RunPreflightCalibration', states: ['CommandReceive'] },
@@ -72,12 +72,6 @@ function generic(code, args = []) {
 
 function local(code, args = []) {
   return ['local', byte(code), ...args.map(byte)].join(' ');
-}
-
-function encodeDirection(direction) {
-  if (direction === 'CW') return 0x01;
-  if (direction === 'CCW') return 0xFF;
-  throw new RangeError('parachute direction must be CW or CCW');
 }
 
 export function encodeSignedTenths(degrees) {
@@ -117,8 +111,8 @@ export function buildCommand(action, options = {}) {
       if (!Number.isFinite(angle) || Math.abs(angle) >= 180) throw new RangeError('parachute relative move must be < 180 deg');
       return generic(GenericCommand.PARA_MOVE_RELATIVE, encodeSignedTenths(angle));
     }
-    case 'setParaOpen': return generic(GenericCommand.SET_PARA_OPEN, [encodeDirection(options.direction)]);
-    case 'setParaClose': return generic(GenericCommand.SET_PARA_CLOSE, [encodeDirection(options.direction)]);
+    case 'setParaOpen': return generic(GenericCommand.SET_PARA_OPEN);
+    case 'setParaClose': return generic(GenericCommand.SET_PARA_CLOSE);
     case 'paraOpen': return generic(GenericCommand.PARA_OPEN);
     case 'paraClose': return generic(GenericCommand.PARA_CLOSE);
     case 'runCalibration': return generic(GenericCommand.RUN_PREFLIGHT_CALIBRATION);

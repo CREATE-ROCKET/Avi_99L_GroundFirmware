@@ -21,13 +21,24 @@ export function runUiV2Tests() {
 
   const commandOverview = createScreenRenderer({ store }).screen('overview');
   for (const readinessLabel of [
-    'FIN ZERO', 'PARA OPEN', 'PARA CLOSE', 'MOTOR PROFILE',
-    'GYRO BIAS', 'GRAVITY REFERENCE', 'SSC ZERO',
+    'FIN ZERO', 'MOTOR PROFILE', 'GYRO BIAS', 'GRAVITY REFERENCE', 'SSC ZERO',
   ]) {
     assert.match(commandOverview, new RegExp(readinessLabel));
   }
+  assert.doesNotMatch(commandOverview, /PARA OPEN/);
+  assert.doesNotMatch(commandOverview, /PARA CLOSE/);
   assert.match(commandOverview, /data-action="startSequence"/);
   assert.doesNotMatch(commandOverview, /data-action="startSequence"[^>]*disabled/);
+
+  const actuatorScreen = createScreenRenderer({ store }).screen('actuators');
+  assert.match(actuatorScreen, /data-action="paraOpen"/);
+  assert.match(actuatorScreen, /data-action="paraClose"/);
+  assert.doesNotMatch(actuatorScreen, /data-action="paraFree"/);
+  assert.doesNotMatch(actuatorScreen, /data-action="paraHold"/);
+  assert.doesNotMatch(actuatorScreen, /data-move-para/);
+  assert.doesNotMatch(actuatorScreen, /data-set-para-absolute/);
+  assert.doesNotMatch(actuatorScreen, /para-open-absolute/);
+  assert.doesNotMatch(actuatorScreen, /para-close-absolute/);
 
   // Current canonical A8 vector from the versioned protocol tests.
   store.ingestLineRecord(envelope(

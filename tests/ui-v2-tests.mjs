@@ -18,6 +18,8 @@ export function runUiV2Tests() {
   assert.equal(store.lastKnownMissionState, 'CommandReceive');
   assert.equal(store.attitudeSamples.length, 1);
   assert.equal(store.attitudeSamples.at(-1).roll, 30);
+  assert.equal(store.getLatestValue('finMode').raw, 3);
+  assert.equal(store.getLatestValue('finMode').value, 'ZeroHold');
 
   const commandTabs = createScreenRenderer({ store }).tabs('overview');
   assert.match(commandTabs, /OVERVIEW/);
@@ -49,6 +51,7 @@ export function runUiV2Tests() {
   assert.match(actuatorScreen, /data-action="finFree"/);
   assert.match(actuatorScreen, /data-action="setFinZero"/);
   assert.match(actuatorScreen, /data-action="finHold"/);
+  assert.match(actuatorScreen, /ZeroHold/);
   assert.doesNotMatch(actuatorScreen, /data-move-fin/);
   assert.doesNotMatch(actuatorScreen, /fin-relative/);
   assert.match(actuatorScreen, /data-action="paraOpen"/);

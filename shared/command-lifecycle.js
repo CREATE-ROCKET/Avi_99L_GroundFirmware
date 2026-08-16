@@ -1,3 +1,5 @@
+export const COMMAND_ACK_TIMEOUT_MS = 3000;
+
 function byte(value) {
   if (!/^(?:0x[0-9A-Fa-f]{1,2}|[0-9]{1,3})$/.test(value)) return null;
   const parsed = Number(value);
@@ -15,21 +17,44 @@ export function describeConsoleCommand(text) {
       expectedResultCommand: command,
       expectsTx: true,
       expectsResult: true,
+      // Mission genericだけはCommandResult(Accepted, None)をACKとして必須にする。
+      expectsAck: tokens[0] === 'g',
     };
   }
   if (tokens[0] === 'ae') {
-    return { kind: 1, command: 0, expectedResultCommand: 0xF0, expectsTx: true, expectsResult: true };
+    return {
+      kind: 1,
+      command: 0,
+      expectedResultCommand: 0xF0,
+      expectsTx: true,
+      expectsResult: true,
+      expectsAck: false,
+    };
   }
   if (tokens[0] === 'le') {
-    return { kind: 2, command: 0, expectedResultCommand: 0xF1, expectsTx: true, expectsResult: true };
+    return {
+      kind: 2,
+      command: 0,
+      expectedResultCommand: 0xF1,
+      expectsTx: true,
+      expectsResult: true,
+      expectsAck: false,
+    };
   }
   if (tokens[0] === 'time') {
     const requestId = byte(tokens[1]);
     if (requestId === null || requestId === 0) return null;
-    return { kind: 4, command: 2, expectedId: requestId, expectsTx: true, expectsResult: false };
+    return {
+      kind: 4,
+      command: 2,
+      expectedId: requestId,
+      expectsTx: true,
+      expectsResult: false,
+      expectsAck: false,
+    };
   }
-  if (tokens[0] === 'release') return { expectsTx: false, releaseId: byte(tokens[1]) };
-  if (tokens[0] === 'help') return { expectsTx: false };
+  if (tokens[0] === 'release') return { expectsTx: false, releaseId: byte(tokens[1]), expectsAck: false };
+  if (tokens[0] === 'help') return { expectsTx: false, expectsAck: false };
   return null;
 }
 
@@ -51,6 +76,11 @@ export class OutboundCommandTracker {
       queuedAtMs: atMs,
       transactionId: null,
       results: [],
+      acknowledgedAtMs: null,
+      ackTimeoutAtMs: null,
+      ackTimeoutMs: null,
+      ackMissingTerminal: false,
+      ackInvalid: false,
     };
     if (forcedLocalId === null) {
       this.nextLocalId = this.nextLocalId === 0xFFFFFFFF ? 1 : this.nextLocalId + 1;
@@ -87,7 +117,7 @@ export class OutboundCommandTracker {
   markUsbWriteFailed(localId, error, atMs = Date.now()) {
     const entry = this.findLocal(localId);
     if (!entry) return null;
-    if (entry.state !== 'BOARD_TX_OK' && entry.state !== 'ACCEPTED' && entry.state !== 'FINAL') {
+    if (!['BOARD_TX_OK', 'ACCEPTED', 'ACK_TIMEOUT', 'ACK_INVALID', 'FINAL'].includes(entry.state)) {
       entry.state = 'USB_WRITE_FAILED';
     }
     entry.usbWriteFailedAtMs = atMs;
@@ -146,6 +176,17 @@ export class OutboundCommandTracker {
     return { matched: true, entry };
   }
 
+  markAckTimeout(localId, atMs = Date.now(), timeoutMs = COMMAND_ACK_TIMEOUT_MS) {
+    const entry = this.findLocal(localId);
+    if (!entry || !entry.description?.expectsAck || entry.state !== 'BOARD_TX_OK') return null;
+    entry.state = 'ACK_TIMEOUT';
+    entry.ackTimeoutAtMs = atMs;
+    entry.ackTimeoutMs = timeoutMs;
+    entry.error = 'ACK_TIMEOUT';
+    // timeout後もtransaction IDは保持する。遅延B0との衝突を避けるため自動解放しない。
+    return entry;
+  }
+
   applyCommandResult(result, atMs = Date.now()) {
     const entry = this.byTransaction.get(result.transactionId);
     if (!entry || entry.description.expectedResultCommand !== result.command) {
@@ -159,13 +200,34 @@ export class OutboundCommandTracker {
       entry.results.push({ ...result, signature, atMs, late: true });
       return { matched: true, duplicate: false, late: true, entry };
     }
+
+    const hadAck = entry.results.some((item) => item.phase === 0 && item.reason === 0);
     entry.results.push({ ...result, signature, atMs });
-    if (result.phase === 0) entry.state = 'ACCEPTED';
-    else {
-      entry.state = 'FINAL';
-      entry.finalAtMs = atMs;
+
+    if (result.phase === 0) {
+      if (result.reason === 0) {
+        const lateAck = entry.ackTimeoutAtMs !== null;
+        entry.state = 'ACCEPTED';
+        entry.acknowledgedAtMs = atMs;
+        entry.ackLate = lateAck;
+        return { matched: true, duplicate: false, entry, ack: true, lateAck };
+      }
+      entry.state = 'ACK_INVALID';
+      entry.ackInvalid = true;
+      entry.ackInvalidAtMs = atMs;
+      entry.error = 'ACK_REASON_NOT_NONE';
+      return { matched: true, duplicate: false, entry, ackInvalid: true };
     }
-    return { matched: true, duplicate: false, entry };
+
+    entry.state = 'FINAL';
+    entry.finalAtMs = atMs;
+    entry.ackMissingTerminal = Boolean(entry.description?.expectsAck && !hadAck);
+    return {
+      matched: true,
+      duplicate: false,
+      entry,
+      ackMissing: entry.ackMissingTerminal,
+    };
   }
 
   applyTransactionRelease(record, atMs = Date.now()) {

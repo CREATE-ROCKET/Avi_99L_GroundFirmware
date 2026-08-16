@@ -1,9 +1,5 @@
 const DEPRECATED_ACTIONS = new Set(['paraFree', 'paraHold', 'paraMoveRelative', 'setParaOpen', 'setParaClose']);
-
-function commandBit(bit) {
-  const item = window.__groundStoreForParachuteUi?.getLatestValue?.(`Command status.bit${bit}`);
-  return typeof item?.value === 'boolean' ? item.value : null;
-}
+const READINESS_LABELS = new Set(['FIN ZERO', 'MOTOR PROFILE', 'GYRO BIAS', 'GRAVITY REFERENCE', 'SSC ZERO']);
 
 function simplifyParachuteUi(root = document) {
   for (const action of DEPRECATED_ACTIONS) {
@@ -39,9 +35,10 @@ function simplifyParachuteUi(root = document) {
       const label = row.querySelector('span')?.textContent?.trim();
       if (label === 'PARA OPEN' || label === 'PARA CLOSE') row.remove();
     });
-    const values = [5, 21, 16, 17, 18].map(commandBit);
-    if (values.every((value) => value !== null)) {
-      const ready = values.every(Boolean);
+    const rows = [...readiness.querySelectorAll('.status-row')]
+      .filter((row) => READINESS_LABELS.has(row.querySelector('span')?.textContent?.trim()));
+    if (rows.length === READINESS_LABELS.size) {
+      const ready = rows.every((row) => row.querySelector('.dot')?.classList.contains('ok'));
       const state = readiness.querySelector('.big-state');
       if (state) {
         state.textContent = ready ? 'FLIGHT READY' : 'NOT READY';
@@ -52,9 +49,6 @@ function simplifyParachuteUi(root = document) {
   }
 }
 
-export function installParachuteSimpleUi(store) {
-  window.__groundStoreForParachuteUi = store;
-  const observer = new MutationObserver(() => simplifyParachuteUi());
-  observer.observe(document.documentElement, { childList: true, subtree: true });
-  simplifyParachuteUi();
-}
+const observer = new MutationObserver(() => simplifyParachuteUi());
+observer.observe(document.documentElement, { childList: true, subtree: true });
+simplifyParachuteUi();

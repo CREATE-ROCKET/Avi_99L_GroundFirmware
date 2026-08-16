@@ -4,7 +4,7 @@ import {
   PacketHeader,
   packetNames,
 } from '../../shared/protocol.js';
-import { OutboundCommandTracker } from '../../shared/command-lifecycle.js';
+import { COMMAND_ACK_TIMEOUT_MS, OutboundCommandTracker } from '../../shared/command-lifecycle.js';
 
 const MAX_RAW_PACKETS = 1000;
 const MAX_EVENTS = 500;
@@ -61,6 +61,7 @@ export class TelemetryStore extends EventTarget {
     this.appDecodeMismatches = 0;
     this.latestTimeRequestId = null;
     this.commandTracker = new OutboundCommandTracker(64);
+    this.commandAckTimers = new Map();
     this.storeLatenciesMs = [];
     this.paintLatenciesMs = [];
     this.pendingPaintReceivedAtMs = null;
@@ -93,6 +94,7 @@ export class TelemetryStore extends EventTarget {
 
   endReplay() {
     this.replaying = false;
+    this.resumeCommandAckTimers();
     if (this.replayDirty) this.notify();
     this.replayDirty = false;
   }
@@ -139,6 +141,49 @@ export class TelemetryStore extends EventTarget {
   addPacketMonitor(entry) {
     this.packetMonitor.push(entry);
     if (this.packetMonitor.length > MAX_PACKET_MONITOR) this.packetMonitor.shift();
+  }
+
+  clearCommandAckTimer(localId) {
+    const timer = this.commandAckTimers.get(localId);
+    if (timer !== undefined) clearTimeout(timer);
+    this.commandAckTimers.delete(localId);
+  }
+
+  scheduleCommandAckTimer(entry) {
+    if (!entry?.description?.expectsAck || entry.state !== 'BOARD_TX_OK' || !Number.isFinite(entry.txAtMs)) return;
+    this.clearCommandAckTimer(entry.localId);
+    const deadlineAtMs = entry.txAtMs + COMMAND_ACK_TIMEOUT_MS;
+    const delayMs = Math.max(0, deadlineAtMs - Date.now());
+    const timer = setTimeout(() => {
+      this.commandAckTimers.delete(entry.localId);
+      const timedOut = this.commandTracker.markAckTimeout(
+        entry.localId,
+        deadlineAtMs,
+        COMMAND_ACK_TIMEOUT_MS,
+      );
+      if (!timedOut) return;
+      this.addEvent(
+        `COMMAND ACK TIMEOUT / id=${timedOut.transactionId} command=0x${timedOut.description.command.toString(16).padStart(2, '0').toUpperCase()} timeout_ms=${COMMAND_ACK_TIMEOUT_MS}`,
+        'error',
+        { localId: timedOut.localId, transactionId: timedOut.transactionId, timeoutMs: COMMAND_ACK_TIMEOUT_MS },
+      );
+      this.notify('command-result', {
+        matched: true,
+        entry: timedOut,
+        ackTimeout: true,
+        timeoutMs: COMMAND_ACK_TIMEOUT_MS,
+      });
+      this.notify();
+    }, delayMs);
+    this.commandAckTimers.set(entry.localId, timer);
+  }
+
+  resumeCommandAckTimers() {
+    for (const entry of this.commandTracker.commands) {
+      if (entry.description?.expectsAck && entry.state === 'BOARD_TX_OK') {
+        this.scheduleCommandAckTimer(entry);
+      }
+    }
   }
 
   ingestLineRecord(input) {
@@ -192,6 +237,7 @@ export class TelemetryStore extends EventTarget {
       if (record.event === 'TRANSACTION_RELEASE') {
         const outcome = this.commandTracker.applyTransactionRelease(record, receivedAtMs);
         if (!outcome.matched) this.addEvent(`UNMATCHED RELEASE / id=${record.id}`, 'warn');
+        if (outcome.released) this.clearCommandAckTimer(outcome.released.localId);
       }
       if (record.event === 'UPLINK_ABORTED') {
         const outcome = this.commandTracker.applyUplinkAborted(record, receivedAtMs);
@@ -210,9 +256,13 @@ export class TelemetryStore extends EventTarget {
 
   ingestTx(record, hostMs) {
     const outcome = this.commandTracker.applyTx(record, hostMs);
-    this.addEvent(`UPLINK ${record.ok ? 'SENT' : 'FAILED'} / id=${record.id} command=0x${record.command.toString(16).padStart(2, '0').toUpperCase()}`,
-      record.ok ? 'ok' : 'error');
+    const waitingAck = Boolean(outcome.matched && record.ok && outcome.entry.description?.expectsAck);
+    this.addEvent(
+      `UPLINK ${record.ok ? (waitingAck ? 'SENT / WAITING ACK' : 'SENT') : 'FAILED'} / id=${record.id} command=0x${record.command.toString(16).padStart(2, '0').toUpperCase()}`,
+      record.ok ? 'ok' : 'error',
+    );
     if (!outcome.matched) this.addEvent(`UNMATCHED @TX / id=${record.id}`, 'warn');
+    if (waitingAck && !this.replaying) this.scheduleCommandAckTimer(outcome.entry);
     this.notify();
   }
 
@@ -286,16 +336,36 @@ export class TelemetryStore extends EventTarget {
     }
     if (decoded.header === PacketHeader.COMMAND_RESULT) {
       const fields = fieldMap(decoded);
-      const outcome = this.commandTracker.applyCommandResult({
+      const result = {
         transactionId: fields.transactionId.raw,
         command: fields.command.raw,
         phase: fields.phase.raw,
         reason: fields.reason.raw,
         detail: fields.detail.raw,
-      }, hostMs);
+      };
+      const outcome = this.commandTracker.applyCommandResult(result, hostMs);
       if (!outcome.matched) this.addEvent(`UNMATCHED B0 / id=${fields.transactionId.raw}`, 'warn');
-      else if (outcome.duplicate) this.addEvent(`DUPLICATE B0 / id=${fields.transactionId.raw}`, 'warn');
-      else if (outcome.late) this.addEvent(`LATE B0 / id=${fields.transactionId.raw}`, 'warn');
+      else {
+        this.clearCommandAckTimer(outcome.entry.localId);
+        if (outcome.duplicate) this.addEvent(`DUPLICATE B0 / id=${fields.transactionId.raw}`, 'warn');
+        else if (outcome.late) this.addEvent(`LATE B0 / id=${fields.transactionId.raw}`, 'warn');
+        else if (outcome.ack) {
+          this.addEvent(
+            `COMMAND ACK${outcome.lateAck ? ' / LATE' : ''} / id=${result.transactionId} command=0x${result.command.toString(16).padStart(2, '0').toUpperCase()}`,
+            outcome.lateAck ? 'warn' : 'ok',
+          );
+        } else if (outcome.ackInvalid) {
+          this.addEvent(
+            `INVALID COMMAND ACK / id=${result.transactionId} command=0x${result.command.toString(16).padStart(2, '0').toUpperCase()} reason=${result.reason}`,
+            'error',
+          );
+        } else if (outcome.ackMissing && result.phase === 1) {
+          this.addEvent(
+            `COMMAND ACK MISSING / terminal=Completed id=${result.transactionId} command=0x${result.command.toString(16).padStart(2, '0').toUpperCase()}`,
+            'error',
+          );
+        }
+      }
     }
     this.ingestDecoded(decoded, metadata);
   }

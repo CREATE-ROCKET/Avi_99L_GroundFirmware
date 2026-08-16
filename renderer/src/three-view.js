@@ -123,6 +123,7 @@ export class RocketView {
     this.pose = new PredictivePose();
     this.vehicle = new THREE.Group();
     this.vehicle.name = 'RocketDisplayFrame';
+    this.vehicle.visible = false;
     this.scene.add(this.vehicle);
     this.root = null;
     this.finA = null;
@@ -201,7 +202,7 @@ export class RocketView {
       this.modelCenter.set(0, 0, 0);
       this.modelRadius = Math.max(sphere.radius, 0.1);
       this.resetObliqueView();
-      this.updateStatus('MODEL READY');
+      this.updateStatus('ATTITUDE UNKNOWN');
     }, undefined, (error) => {
       console.error(error);
       this.updateStatus(`MODEL ERROR / ${error.message}`);
@@ -257,12 +258,19 @@ export class RocketView {
     const now = Date.now();
     if (this.root) {
       const pose = this.pose.sampleAt(this.store.attitudeSamples, now);
-      if (pose) {
+      if (pose && !pose.stale) {
+        this.vehicle.visible = true;
         this.vehicle.quaternion.copy(pose.q);
         this.applyFin(pose.finAngle ?? 0);
-        this.stale = pose.stale;
-        this.host.classList.toggle('is-stale', pose.stale);
-        this.updateStatus(pose.stale ? `ATTITUDE STALE / ${(pose.ageMs / 1000).toFixed(1)} s` : 'LIVE ATTITUDE');
+        this.stale = false;
+        this.host.classList.remove('is-stale');
+        this.updateStatus('LIVE ATTITUDE');
+      } else {
+        // invalid/stale/no-sampleを最後の正常姿勢で代用しない。
+        this.vehicle.visible = false;
+        this.stale = true;
+        this.host.classList.add('is-stale');
+        this.updateStatus(pose?.stale ? `ATTITUDE UNKNOWN / STALE ${(pose.ageMs / 1000).toFixed(1)} s` : 'ATTITUDE UNKNOWN');
       }
     }
     this.controls.update();

@@ -3,6 +3,15 @@ import { decodeApplicationPacket, fieldMap, PacketHeader } from '../../shared/pr
 
 const MISSION_STATES = new Set(['CommandReceive', 'LiftoffDetection', 'EngineBurn', 'Control', 'Descent']);
 const LONG_HISTORY_LIMIT = 100000;
+const FIN_MODE_NAMES = Object.freeze({
+  0: 'Free / Hi-Z',
+  1: 'Brake',
+  2: 'HoldPosition',
+  3: 'ZeroHold',
+  4: 'MoveRelative',
+  5: 'RollControl',
+  15: 'Unknown',
+});
 const FALLBACK_ALIASES = Object.freeze({
   fallbackReason: 'fallbackReason', lastMissionState: 'fallbackLastMissionState',
   gnssState: 'fallbackGnssState', missionStatusAge: 'fallbackMissionStatusAge',
@@ -209,6 +218,9 @@ export class TelemetryStore extends BaseTelemetryStore {
     else if (CONTROL_ALIASES[key]) actualKey = CONTROL_ALIASES[key];
     const item = super.getLatestValue(actualKey);
     if (!item) return null;
+    if (key === 'finMode' && Number.isInteger(item.raw)) {
+      return { ...item, value: FIN_MODE_NAMES[item.raw] ?? 'Unknown' };
+    }
     if (this.communicationMode === 'MissionLinkFallback' && (key === 'logicVoltage' || key === 'motorVoltage') && item.status === 'VALID') {
       return { ...item, status: 'LAST_KNOWN' };
     }

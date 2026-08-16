@@ -70,6 +70,9 @@ let spaceTimer = null;
 let spaceFired = false;
 let lastHandledTimeRequestId = null;
 
+const PARACHUTE_ABSOLUTE_TELEMETRY_MAX_AGE_MS = 1500;
+const PARACHUTE_COMMAND_TERMINAL_TIMEOUT_MS = 12000;
+
 const screens = createScreenRenderer({ store, devMode: DEV_MODE, loggerStatus: () => loggerStatus });
 const forceStartUi = createForceStartUi({ store, onForce: () => dispatchAction('forceStartSequence') });
 
@@ -86,6 +89,90 @@ function effectiveCommandState() {
 function activeInput() {
   const node = document.activeElement;
   return node && ['INPUT', 'SELECT', 'TEXTAREA'].includes(node.tagName);
+}
+function normalizeParachuteDegrees(value) {
+  return ((value % 360) + 360) % 360;
+}
+function shortestParachuteRelativeMove(currentDegrees, targetDegrees) {
+  if (!Number.isFinite(currentDegrees) || !Number.isFinite(targetDegrees)) throw new TypeError('parachute angle must be finite');
+  if (targetDegrees < 0 || targetDegrees >= 360) throw new RangeError('parachute absolute target must be 0 <= angle < 360 deg');
+  let delta = targetDegrees - normalizeParachuteDegrees(currentDegrees);
+  if (delta > 180) delta -= 360;
+  if (delta < -180) delta += 360;
+  if (Math.abs(Math.abs(delta) - 180) < 1e-9) throw new RangeError('parachute absolute target is exactly 180 deg away');
+  let rounded = Math.round(delta * 10) / 10;
+  if (Math.abs(rounded) >= 180) rounded = Math.sign(rounded) * 179.9;
+  return rounded;
+}
+function finalCommandResult(entry) {
+  return [...(entry?.results ?? [])].reverse().find((result) => result.phase !== 0) ?? null;
+}
+function waitForCommandTerminal(entry, timeoutMs = PARACHUTE_COMMAND_TERMINAL_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    const finish = (result) => {
+      if (result?.phase === 1 && result.reason === 0) resolve(result);
+      else reject(new Error(`terminal phase=${result?.phase ?? 'missing'} reason=${result?.reason ?? 'missing'} detail=${result?.detail ?? 'missing'}`));
+    };
+    const existing = finalCommandResult(entry);
+    if (existing) { finish(existing); return; }
+    const cleanup = () => {
+      clearTimeout(timer);
+      store.removeEventListener('command-result', onResult);
+    };
+    const onResult = (event) => {
+      const detail = event.detail ?? {};
+      if (detail.entry !== entry && detail.entry?.localId !== entry?.localId) return;
+      if (detail.ackTimeout) {
+        cleanup();
+        reject(new Error('command ACK timeout'));
+        return;
+      }
+      if (!detail.result || detail.result.phase === 0) return;
+      cleanup();
+      finish(detail.result);
+    };
+    const timer = setTimeout(() => {
+      store.removeEventListener('command-result', onResult);
+      reject(new Error('command terminal timeout'));
+    }, timeoutMs);
+    store.addEventListener('command-result', onResult);
+  });
+}
+function currentParachuteAbsoluteAngle() {
+  const item = store.getLatestValue('paraAngle');
+  if (!item || !['VALID', 'TEMPORARY_SCALE'].includes(item.status) || !Number.isFinite(item.value)) {
+    throw new Error(`CURRENT POSITION is ${item?.status ?? 'unavailable'}`);
+  }
+  if (!Number.isFinite(item.hostMs) || Date.now() - item.hostMs > PARACHUTE_ABSOLUTE_TELEMETRY_MAX_AGE_MS) {
+    throw new Error('CURRENT POSITION telemetry is stale');
+  }
+  return normalizeParachuteDegrees(item.value);
+}
+async function setParachuteEndpointAbsolute(endpoint) {
+  const actionName = endpoint === 'open' ? 'setParaOpen' : endpoint === 'close' ? 'setParaClose' : null;
+  if (!actionName) return;
+  if (!isActionAvailable(actionName, effectiveCommandState(), store.communicationMode)) {
+    showToast(`COMMAND DISABLED / ${actionName}`);
+    return;
+  }
+  try {
+    const input = document.querySelector(`#para-${endpoint}-absolute`);
+    const target = Number(input?.value);
+    if (!Number.isFinite(target) || target < 0 || target >= 360) throw new RangeError('absolute angle must be 0 <= angle < 360 deg');
+    const current = currentParachuteAbsoluteAngle();
+    const delta = shortestParachuteRelativeMove(current, target);
+    if (Math.abs(delta) >= 0.05) {
+      const move = await sendCommand(buildCommand('paraMoveRelative', { angle: delta }), { throwOnError: true });
+      await waitForCommandTerminal(move);
+    }
+    const save = await sendCommand(buildCommand(actionName), { throwOnError: true });
+    await waitForCommandTerminal(save);
+    store.addEvent(`PARA ${endpoint.toUpperCase()} ABS SET / target=${target.toFixed(1)}deg start=${current.toFixed(1)}deg delta=${delta.toFixed(1)}deg`, 'ok');
+    showToast(`PARA ${endpoint.toUpperCase()} SET / ${target.toFixed(1)}° ABS`);
+  } catch (error) {
+    store.addEvent(`PARA ${endpoint.toUpperCase()} ABS SET FAILED / ${error.message}`, 'error');
+    showToast(`PARA ${endpoint.toUpperCase()} ERROR / ${error.message}`);
+  }
 }
 function renderTopbar() {
   topbar.innerHTML = screens.topbar();
@@ -213,13 +300,16 @@ function bindUi() {
     const value = Number(document.querySelector('#para-relative')?.value ?? 0) * Number(button.dataset.movePara);
     void dispatchAction('paraMoveRelative', { angle: value });
   }));
+  document.querySelectorAll('[data-set-para-absolute]').forEach((button) => button.addEventListener('click', () => {
+    void setParachuteEndpointAbsolute(button.dataset.setParaAbsolute);
+  }));
 }
 
 function bindDrawerUi() {
   document.querySelectorAll('[data-data-tab]').forEach((button) => button.addEventListener('click', () => { dataTab = button.dataset.dataTab; renderDrawers(); bindDrawerUi(); }));
   document.querySelectorAll('[data-ui="data-close"]').forEach((button) => button.addEventListener('click', () => { dataOpen = false; dataDrawer.classList.remove('open'); }));
   if (!DEV_MODE) return;
-  document.querySelectorAll('[data-ui="dev-close"]').forEach((button) => button.addEventListener('click', () => { devOpen = false; devDrawer.classList.remove('open'); }));
+  document.querySelectorAll('[data-ui="dev-close"]').forEach((button) => button.addEventListener('click', () => { devOpen = false; renderDrawers(); bindDrawerUi(); }));
   document.querySelectorAll('[data-ui="synthetic-toggle"]').forEach((button) => button.addEventListener('click', toggleSynthetic));
   document.querySelectorAll('[data-ui="liftoff-test"]').forEach((button) => button.addEventListener('click', () => triggerLiftoff({ source: 'MANUAL DEV TEST' })));
   const form = document.querySelector('#dev-console-form');
@@ -253,20 +343,28 @@ function scheduleRender() {
   requestAnimationFrame(() => { renderQueued = false; renderAll(false); });
 }
 
-async function sendCommand(line) {
+async function sendCommand(line, { throwOnError = false } = {}) {
   const normalized = String(line ?? '').trim();
-  if (!normalized) return;
-  if (!store.connection.connected) { showToast('CONNECT USB PORT FIRST'); return; }
+  if (!normalized) return null;
+  if (!store.connection.connected) {
+    const error = new Error('connect USB port first');
+    showToast('CONNECT USB PORT FIRST');
+    if (throwOnError) throw error;
+    return null;
+  }
   let tracked;
   try {
     tracked = store.queueOutboundCommand(normalized);
     const result = window.groundApi ? await window.groundApi.sendCommand(normalized) : null;
     store.markCommandUsbWritten(tracked.localId, result?.localId ?? tracked.localId);
     showToast(`USB WRITTEN / ${normalized}`);
+    return tracked;
   } catch (error) {
     if (tracked) store.markCommandUsbWriteFailed(tracked.localId, error.message);
     store.addEvent(`TX FAILED / ${error.message}`, 'error');
     showToast(`TX FAILED / ${error.message}`);
+    if (throwOnError) throw error;
+    return null;
   }
 }
 

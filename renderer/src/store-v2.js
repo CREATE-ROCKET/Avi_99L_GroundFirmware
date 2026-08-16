@@ -47,6 +47,8 @@ export class TelemetryStore extends BaseTelemetryStore {
     this.lastKnownMissionState = null;
     this.lastExpectedRxHostMs = null;
     this.lastExpectedIntervalMs = null;
+    // 再接続/BOOT後に旧sessionの姿勢を正常値として表示しない。
+    this.attitudeSamples.length = 0;
     // forcedStartCompleted is session-local audit state. USB reconnect must not
     // erase the warning after a successful ForceStartSequence.
   }
@@ -109,21 +111,36 @@ export class TelemetryStore extends BaseTelemetryStore {
     if (decoded.header === PacketHeader.MISSION_LINK_FALLBACK_TELEMETRY) {
       // GUI state is never inferred from last-known MissionState while the link is lost.
       this.state = 'UNKNOWN';
+      this.attitudeSamples.length = 0;
       this.expandFallbackFlags(decoded, hostMs);
       this.appendFallbackPosition(map, hostMs);
       if (previousState !== 'UNKNOWN') this.addEvent(`MISSION LINK LOST / last=${this.lastKnownMissionState ?? previousState}`, 'error');
     }
 
-    // CommandReceive carries tilt/direction but no liftoff-relative roll. Use display roll=0 only
-    // for preflight visualization; this is not persisted as a measured roll quantity.
     if (decoded.header === PacketHeader.COMMAND_RECEIVE) {
       const tilt = numberFrom(map, 'tilt');
       const tiltDirection = numberFrom(map, 'tiltDirection');
-      if (tilt !== null && tiltDirection !== null) {
-        this.attitudeSamples.push({ hostMs, roll: 0, rollRate: 0, tilt, tiltDirection,
-          finAngle: numberFrom(map, 'finAngle'), finRate: 0, preflightAssumedRoll: true });
+      const displayRoll = numberFrom(map, 'displayRoll');
+      const direction = tilt === 0 ? 0 : tiltDirection;
+      if (tilt !== null && direction !== null && displayRoll !== null) {
+        this.attitudeSamples.push({ hostMs, roll: displayRoll, rollRate: 0, tilt, tiltDirection: direction,
+          finAngle: numberFrom(map, 'finAngle'), finRate: 0, preflightDisplayRoll: true });
         if (this.attitudeSamples.length > 8) this.attitudeSamples.shift();
+      } else {
+        // invalidを旧姿勢のholdとして見せず、3D表示をUNKNOWNへ落とす。
+        this.attitudeSamples.length = 0;
       }
+    } else if ([PacketHeader.LIFTOFF_DETECTION, PacketHeader.ENGINE_BURN, PacketHeader.CONTROL].includes(decoded.header)) {
+      const tilt = numberFrom(map, 'tilt');
+      const tiltDirection = numberFrom(map, 'tiltDirection');
+      const wrappedOrientation = numberFrom(map, 'wrappedOrientation');
+      const directionValid = tilt === 0 || tiltDirection !== null;
+      if (tilt === null || wrappedOrientation === null || !directionValid) {
+        this.attitudeSamples.length = 0;
+      }
+    } else if ([PacketHeader.DESCENT, PacketHeader.RECOVERY_BEACON].includes(decoded.header)) {
+      // これらのpacketは姿勢を運ばないため、直前姿勢を現在姿勢として表示しない。
+      this.attitudeSamples.length = 0;
     }
 
     const systemPoint = {

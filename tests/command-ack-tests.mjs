@@ -4,6 +4,7 @@ import {
   OutboundCommandTracker,
   describeConsoleCommand,
 } from '../shared/command-lifecycle.js';
+import { TelemetryStore } from '../renderer/src/store.js';
 
 function sentGeneric(command = 0x13) {
   const tracker = new OutboundCommandTracker();
@@ -79,5 +80,37 @@ export function runCommandAckTests() {
     }, 1200);
     assert.equal(invalidAck.ackInvalid, true);
     assert.equal(entry.state, 'ACK_INVALID');
+  }
+
+  {
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    let scheduled = null;
+    globalThis.setTimeout = (callback, delayMs) => {
+      scheduled = { callback, delayMs };
+      return 1;
+    };
+    globalThis.clearTimeout = () => {};
+    try {
+      const store = new TelemetryStore();
+      const entry = store.queueOutboundCommand('g 0x13', Date.now());
+      store.markCommandUsbWritten(entry.localId, entry.localId, Date.now());
+      let timeoutEvent = null;
+      store.addEventListener('command-result', (event) => {
+        if (event.detail?.ackTimeout) timeoutEvent = event.detail;
+      });
+      store.ingestTx({ kind: 0, id: 77, command: 0x13, ok: true }, Date.now());
+      assert.ok(scheduled, 'generic @TX ok=1 must arm an ACK timer');
+      assert.ok(scheduled.delayMs >= 2900 && scheduled.delayMs <= 3000);
+      scheduled.callback();
+      const tracked = store.commandTracker.byTransaction.get(77);
+      assert.equal(tracked.state, 'ACK_TIMEOUT');
+      assert.equal(tracked.ackTimeoutMs, 3000);
+      assert.equal(timeoutEvent?.timeoutMs, 3000);
+      assert.equal(store.commandTracker.byTransaction.get(77), tracked);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    }
   }
 }

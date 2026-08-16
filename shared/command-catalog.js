@@ -1,17 +1,10 @@
 export const GenericCommand = Object.freeze({
   START_SEQUENCE: 0x01,
-  CANCEL_SEQUENCE: 0x02,
-  DISABLE_FIN_CONTROL: 0x03,
-  FORCE_START_SEQUENCE: 0x04,
   FIN_FREE: 0x10,
   SET_FIN_ZERO: 0x11,
-  START_FIN_ZERO_HOLD: 0x12,
-  FIN_MOVE_RELATIVE: 0x13,
+  FIN_HOLD: 0x13,
   PARA_OPEN: 0x25,
   PARA_CLOSE: 0x26,
-  RUN_PREFLIGHT_CALIBRATION: 0x30,
-  EXPORT_FLASH_LOG_TO_SD_AND_ERASE: 0x31,
-  ENTER_RECOVERY: 0x33,
 });
 
 export const LocalCommand = Object.freeze({
@@ -23,24 +16,15 @@ export const LocalCommand = Object.freeze({
   DUMP_INTERNAL_FLASH: 'f'.charCodeAt(0),
   DUMP_MISSION_SD: 's'.charCodeAt(0),
   STOP_LOG_DUMP: 'x'.charCodeAt(0),
-  EXIT_RECOVERY: 'e'.charCodeAt(0),
 });
 
 export const ACTIONS = Object.freeze({
   startSequence: { label: 'StartSequence', states: ['CommandReceive'] },
-  forceStartSequence: { label: 'ForceStartSequence', states: ['CommandReceive'], forceOnly: true },
-  cancelSequence: { label: 'CancelSequence', states: ['LiftoffDetection'] },
-  disableFinControl: { label: 'DisableFinControl', states: ['LiftoffDetection', 'EngineBurn', 'Control'] },
   finFree: { label: 'FinFree', states: ['CommandReceive'] },
-  setFinZero: { label: 'SetFinZero', states: ['CommandReceive'] },
-  finZeroHold: { label: 'StartFinZeroHold', states: ['CommandReceive'] },
-  finMoveRelative: { label: 'FinMoveRelative', states: ['CommandReceive'], needs: 'angle' },
+  setFinZero: { label: 'FinZero', states: ['CommandReceive'] },
+  finHold: { label: 'FinHold', states: ['CommandReceive'] },
   paraOpen: { label: 'ParaOpen', states: ['CommandReceive'] },
   paraClose: { label: 'ParaClose', states: ['CommandReceive'] },
-  runCalibration: { label: 'RunPreflightCalibration', states: ['CommandReceive'] },
-  exportFlash: { label: 'ExportFlashLogToSdAndErase', states: ['CommandReceive'] },
-  enterRecovery: { label: 'EnterRecovery', states: ['Descent'] },
-  actuatorEmergency: { label: 'ActuatorEmergencyStop', states: ['CommandReceive'], emergency: true },
   liftoffEmergency: { label: 'LiftoffDetectionEmergencyStop', states: ['EngineBurn'], emergency: true },
   startLogging: { label: 'ComBoard StartLogging', local: true },
   stopLogging: { label: 'ComBoard StopLogging', local: true },
@@ -50,7 +34,6 @@ export const ACTIONS = Object.freeze({
   dumpInternalFlash: { label: 'ComBoard Dump Internal Flash', local: true, communicationModes: ['RecoveryBeacon', 'MissionLinkFallback'] },
   dumpMissionSd: { label: 'ComBoard Dump Mission SD', local: true, communicationModes: ['RecoveryBeacon', 'MissionLinkFallback'] },
   stopLogDump: { label: 'ComBoard Stop Log Dump', local: true, communicationModes: ['RecoveryBeacon', 'MissionLinkFallback'] },
-  exitRecovery: { label: 'Exit Recovery', local: true, communicationModes: ['RecoveryBeacon'] },
 });
 
 function byte(value) {
@@ -89,19 +72,11 @@ export function isActionAvailable(action, missionState, communicationMode = 'Nor
 export function buildCommand(action, options = {}) {
   switch (action) {
     case 'startSequence': return generic(GenericCommand.START_SEQUENCE);
-    case 'forceStartSequence': return generic(GenericCommand.FORCE_START_SEQUENCE);
-    case 'cancelSequence': return generic(GenericCommand.CANCEL_SEQUENCE);
-    case 'disableFinControl': return generic(GenericCommand.DISABLE_FIN_CONTROL);
     case 'finFree': return generic(GenericCommand.FIN_FREE);
     case 'setFinZero': return generic(GenericCommand.SET_FIN_ZERO);
-    case 'finZeroHold': return generic(GenericCommand.START_FIN_ZERO_HOLD);
-    case 'finMoveRelative': return generic(GenericCommand.FIN_MOVE_RELATIVE, encodeSignedTenths(options.angle));
+    case 'finHold': return generic(GenericCommand.FIN_HOLD);
     case 'paraOpen': return generic(GenericCommand.PARA_OPEN);
     case 'paraClose': return generic(GenericCommand.PARA_CLOSE);
-    case 'runCalibration': return generic(GenericCommand.RUN_PREFLIGHT_CALIBRATION);
-    case 'exportFlash': return generic(GenericCommand.EXPORT_FLASH_LOG_TO_SD_AND_ERASE);
-    case 'enterRecovery': return generic(GenericCommand.ENTER_RECOVERY);
-    case 'actuatorEmergency': return 'ae';
     case 'liftoffEmergency': return 'le';
     case 'startLogging': return local(LocalCommand.START_LOGGING);
     case 'stopLogging': return local(LocalCommand.STOP_LOGGING);
@@ -111,7 +86,6 @@ export function buildCommand(action, options = {}) {
     case 'dumpInternalFlash': return local(LocalCommand.DUMP_INTERNAL_FLASH);
     case 'dumpMissionSd': return local(LocalCommand.DUMP_MISSION_SD);
     case 'stopLogDump': return local(LocalCommand.STOP_LOG_DUMP);
-    case 'exitRecovery': return local(LocalCommand.EXIT_RECOVERY);
     default: throw new Error(`unknown action: ${action}`);
   }
 }

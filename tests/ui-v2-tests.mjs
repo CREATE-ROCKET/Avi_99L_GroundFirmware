@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { classifyUsbLine } from '../shared/usb-v1.js';
 import { TelemetryStore } from '../renderer/src/store-v2.js';
 import { createScreenRenderer } from '../renderer/src/screens-v2.js';
-import { buildCommand, encodeSignedTenths, isActionAvailable } from '../shared/command-catalog.js';
+import { buildCommand, isActionAvailable } from '../shared/command-catalog.js';
 import { readGoldenVectors } from './protocol-smoke.mjs';
 
 function envelope(line, hostUnixMs = Date.now()) {
@@ -19,26 +19,45 @@ export function runUiV2Tests() {
   assert.equal(store.attitudeSamples.length, 1);
   assert.equal(store.attitudeSamples.at(-1).roll, 30);
 
+  const commandTabs = createScreenRenderer({ store }).tabs('overview');
+  assert.match(commandTabs, /OVERVIEW/);
+  assert.match(commandTabs, /ACTUATORS/);
+  assert.match(commandTabs, /SYSTEM/);
+  assert.doesNotMatch(commandTabs, /CALIBRATION/);
+
   const commandOverview = createScreenRenderer({ store }).screen('overview');
-  for (const readinessLabel of [
-    'FIN ZERO', 'MOTOR PROFILE', 'GYRO BIAS', 'GRAVITY REFERENCE', 'SSC ZERO',
-  ]) {
-    assert.match(commandOverview, new RegExp(readinessLabel));
-  }
+  assert.match(commandOverview, /FIN ZERO/);
+  assert.match(commandOverview, /Minimal MissionBoard/);
   assert.doesNotMatch(commandOverview, /PARA OPEN/);
   assert.doesNotMatch(commandOverview, /PARA CLOSE/);
+  assert.doesNotMatch(commandOverview, /MOTOR PROFILE/);
+  assert.doesNotMatch(commandOverview, /RUN PREFLIGHT CAL/);
+  assert.doesNotMatch(commandOverview, /ACTUATOR EMERGENCY STOP/);
+  assert.doesNotMatch(commandOverview, /SPACE HOLD/);
+  assert.doesNotMatch(commandOverview, /data-command-tab="calibration"/);
   assert.match(commandOverview, /data-action="startSequence"/);
-  assert.doesNotMatch(commandOverview, /data-action="startSequence"[^>]*disabled/);
+  assert.match(commandOverview, /data-action="finHold"/);
+  assert.doesNotMatch(commandOverview, /data-action="finZeroHold"/);
+  assert.match(commandOverview, /class="start-gate-summary" hidden/);
+
+  const devDrawer = createScreenRenderer({ store, devMode: true }).developerDrawer(false);
+  assert.doesNotMatch(devDrawer, /dev-console-form/);
+  assert.doesNotMatch(devDrawer, /SEND RAW/);
+  assert.match(devDrawer, /Raw command transmission is omitted/);
 
   const actuatorScreen = createScreenRenderer({ store }).screen('actuators');
+  assert.match(actuatorScreen, /data-action="finFree"/);
+  assert.match(actuatorScreen, /data-action="setFinZero"/);
+  assert.match(actuatorScreen, /data-action="finHold"/);
+  assert.doesNotMatch(actuatorScreen, /data-move-fin/);
+  assert.doesNotMatch(actuatorScreen, /fin-relative/);
   assert.match(actuatorScreen, /data-action="paraOpen"/);
   assert.match(actuatorScreen, /data-action="paraClose"/);
   assert.doesNotMatch(actuatorScreen, /data-action="paraFree"/);
   assert.doesNotMatch(actuatorScreen, /data-action="paraHold"/);
   assert.doesNotMatch(actuatorScreen, /data-move-para/);
   assert.doesNotMatch(actuatorScreen, /data-set-para-absolute/);
-  assert.doesNotMatch(actuatorScreen, /para-open-absolute/);
-  assert.doesNotMatch(actuatorScreen, /para-close-absolute/);
+  assert.doesNotMatch(actuatorScreen, /ACTUATOR EMERGENCY STOP/);
 
   // Current canonical A8 vector from the versioned protocol tests.
   store.ingestLineRecord(envelope(
@@ -75,31 +94,30 @@ export function runUiV2Tests() {
   assert.equal(recoveryStore.estimatedMissed, 0);
   assert.equal(recoveryStore.attitudeSamples.length, 0);
 
-  assert.deepEqual(encodeSignedTenths(-12.3), [0x85, 0xff]);
   assert.equal(buildCommand('startSequence'), 'g 0x01');
-  assert.equal(buildCommand('forceStartSequence'), 'g 0x04');
-  assert.equal(buildCommand('finMoveRelative', { angle: -12.3 }), 'g 0x13 0x85 0xff');
+  assert.equal(buildCommand('finFree'), 'g 0x10');
+  assert.equal(buildCommand('setFinZero'), 'g 0x11');
+  assert.equal(buildCommand('finHold'), 'g 0x13');
   assert.equal(buildCommand('paraOpen'), 'g 0x25');
   assert.equal(buildCommand('paraClose'), 'g 0x26');
-  assert.throws(() => buildCommand('paraFree'), /unknown action/);
-  assert.throws(() => buildCommand('paraHold'), /unknown action/);
-  assert.throws(() => buildCommand('paraMoveRelative', { angle: 17.5 }), /unknown action/);
-  assert.throws(() => buildCommand('setParaOpen'), /unknown action/);
-  assert.throws(() => buildCommand('setParaClose'), /unknown action/);
-  assert.equal(buildCommand('enterRecovery'), 'g 0x33');
-  assert.equal(buildCommand('actuatorEmergency'), 'ae');
+  for (const omitted of [
+    'forceStartSequence', 'cancelSequence', 'disableFinControl', 'finZeroHold',
+    'finMoveRelative', 'paraFree', 'paraHold', 'paraMoveRelative', 'setParaOpen',
+    'setParaClose', 'runCalibration', 'exportFlash', 'enterRecovery', 'exitRecovery', 'actuatorEmergency',
+  ]) {
+    assert.throws(() => buildCommand(omitted), /unknown action/);
+  }
   assert.equal(buildCommand('liftoffEmergency'), 'le');
   assert.equal(buildCommand('startLogging'), 'local 108');
   assert.equal(buildCommand('wakeMission'), 'local 119');
-  assert.equal(buildCommand('exitRecovery'), 'local 101');
   assert.equal(isActionAvailable('startSequence', 'Control', 'Normal'), false);
-  assert.equal(isActionAvailable('forceStartSequence', 'CommandReceive', 'Normal'), true);
-  assert.equal(isActionAvailable('forceStartSequence', 'EngineBurn', 'Normal'), false);
-  assert.equal(isActionAvailable('forceStartSequence', 'CommandReceive', 'MissionLinkFallback'), false);
+  assert.equal(isActionAvailable('startSequence', 'CommandReceive', 'Normal'), true);
+  assert.equal(isActionAvailable('actuatorEmergency', 'CommandReceive', 'Normal'), false);
+  assert.equal(isActionAvailable('forceStartSequence', 'CommandReceive', 'Normal'), false);
   assert.equal(isActionAvailable('selectMotorProfile', 'CommandReceive', 'Normal'), false);
   assert.equal(isActionAvailable('wakeMission', 'Descent', 'Normal'), false);
   assert.equal(isActionAvailable('wakeMission', 'Descent', 'RecoveryBeacon'), true);
-  assert.equal(isActionAvailable('exitRecovery', 'Descent', 'RecoveryBeacon'), true);
+  assert.equal(isActionAvailable('exitRecovery', 'Descent', 'RecoveryBeacon'), false);
   assert.equal(isActionAvailable('exitRecovery', 'Descent', 'MissionLinkFallback'), false);
   assert.equal(isActionAvailable('dumpMissionSd', 'Control', 'MissionLinkFallback'), true);
   assert.throws(() => buildCommand('selectMotorProfile', { profile: 1 }), /unknown action/);

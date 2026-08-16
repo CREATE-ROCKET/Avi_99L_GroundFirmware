@@ -37,7 +37,7 @@ export const packetNames = Object.freeze({
 });
 
 export const expectedApplicationLengths = Object.freeze({
-  [PacketHeader.COMMAND_RECEIVE]: 22,
+  [PacketHeader.COMMAND_RECEIVE]: 24,
   [PacketHeader.LIFTOFF_DETECTION]: 24,
   [PacketHeader.ENGINE_BURN]: 24,
   [PacketHeader.CONTROL]: 24,
@@ -360,6 +360,9 @@ function decodeCommandReceive(bytes) {
     semantic(motorRaw,240,0.05,0,batteryErrors),'V');
 
   decodeCommonPosition(reader, fields);
+  const displayRollRaw = reader.read(16);
+  addSemantic(fields, 'displayRoll', 'Preflight display roll', 'Attitude', displayRollRaw,
+    signedWithReserved(displayRollRaw, 16, 0x8000, 0x800F, 0.5, commonImuErrors), 'deg');
   reader.alignByte();
   const checksum = reader.read(8);
   fields.push(field('checksum', 'XOR checksum', 'Protocol', checksum, `0x${checksum.toString(16).padStart(2,'0').toUpperCase()}`));

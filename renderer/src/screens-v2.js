@@ -31,7 +31,12 @@ export function createScreenRenderer({ store, devMode = false, loggerStatus = ()
     const fin = commandBit(5) === true;
     const open = commandBit(6) === true;
     const close = commandBit(7) === true;
-    return { fin, open, close, ready: fin && open && close };
+    const motorProfile = commandBit(21) === true;
+    const gyroBias = commandBit(16) === true;
+    const gravityReference = commandBit(17) === true;
+    const sscZero = commandBit(18) === true;
+    const ready = fin && open && close && motorProfile && gyroBias && gravityReference && sscZero;
+    return { fin, open, close, motorProfile, gyroBias, gravityReference, sscZero, ready };
   };
 
   function deviceStatus(name) {
@@ -100,9 +105,8 @@ export function createScreenRenderer({ store, devMode = false, loggerStatus = ()
 
   function overview() {
     const r = renderReadiness();
-    const controlReady = [0, 1, 2, 3, 16, 18, 21].every((bit) => commandBit(bit) === true) && commandBit(22) !== true;
     return `<div class="grid command-overview">
-      <section class="panel readiness-panel"><div class="panel-title"><b>01</b> FLIGHT READINESS</div><div class="big-state ${r.ready ? 'ok' : 'error'}">${r.ready ? 'FLIGHT READY' : 'NOT READY'}</div>${statusRow('FIN ZERO', r.fin ? 'READY' : 'NOT SET', r.fin ? 'ok' : 'error')}${statusRow('PARA OPEN', r.open ? 'READY' : 'NOT SET', r.open ? 'ok' : 'error')}${statusRow('PARA CLOSE', r.close ? 'READY' : 'NOT SET', r.close ? 'ok' : 'error')}${statusRow('CONTROL READY', controlReady ? 'YES' : 'NO', controlReady ? 'ok' : 'warn')}<div class="action-row">${action('runCalibration', 'RUN PREFLIGHT CAL')}${action('setFinZero', 'SET FIN ZERO')}${action('finZeroHold', 'ZERO HOLD')}${action('startSequence', 'START SEQUENCE', { kind: 'dark', disabled: !r.ready })}</div></section>
+      <section class="panel readiness-panel"><div class="panel-title"><b>01</b> FLIGHT READINESS</div><div class="big-state ${r.ready ? 'ok' : 'error'}">${r.ready ? 'FLIGHT READY' : 'NOT READY'}</div>${statusRow('FIN ZERO', r.fin ? 'READY' : 'NOT SET', r.fin ? 'ok' : 'error')}${statusRow('PARA OPEN', r.open ? 'READY' : 'NOT SET', r.open ? 'ok' : 'error')}${statusRow('PARA CLOSE', r.close ? 'READY' : 'NOT SET', r.close ? 'ok' : 'error')}${statusRow('MOTOR PROFILE', r.motorProfile ? 'VALID' : 'INVALID', r.motorProfile ? 'ok' : 'error')}${statusRow('GYRO BIAS', r.gyroBias ? 'VALID' : 'INVALID', r.gyroBias ? 'ok' : 'error')}${statusRow('GRAVITY REFERENCE', r.gravityReference ? 'VALID' : 'INVALID', r.gravityReference ? 'ok' : 'error')}${statusRow('SSC ZERO', r.sscZero ? 'VALID' : 'INVALID', r.sscZero ? 'ok' : 'error')}<div class="action-row">${action('runCalibration', 'RUN PREFLIGHT CAL')}${action('setFinZero', 'SET FIN ZERO')}${action('finZeroHold', 'ZERO HOLD')}${action('startSequence', 'START SEQUENCE', { kind: 'dark' })}</div></section>
       <section class="panel vehicle-panel"><div class="panel-title"><b>02</b> VEHICLE / 3D</div><div id="rocket-host" class="visual-host"></div><div class="metric-grid small">${metric('FIN', fieldText('finAngle'))}${metric('PARA', fieldText('paraAngle'))}${metric('TILT', fieldText('tilt'))}</div></section>
       <section class="panel map-panel"><div class="panel-title"><b>03</b> MAP / POSITION</div><div id="map-host" class="visual-host"></div><div class="metric-grid small">${metric('EAST', fieldText('east'))}${metric('NORTH', fieldText('north'))}${metric('HEIGHT', fieldText('height'))}</div></section>
       <section class="panel quick-panel"><div class="panel-title"><b>04</b> QUICK STATUS</div><div class="quick-cards"><button data-command-tab="calibration"><span>CALIBRATION</span><strong>${commandBit(16) && commandBit(17) ? 'VALID' : 'CHECK'}</strong></button><button data-command-tab="actuators"><span>ACTUATORS</span><strong>FIN / PARA</strong></button><button data-command-tab="system"><span>SYSTEM</span><strong>POWER / STORAGE</strong></button></div><div class="emergency-hint">SPACE HOLD 300 ms / ACTUATOR EMERGENCY STOP</div></section>

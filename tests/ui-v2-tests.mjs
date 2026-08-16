@@ -46,8 +46,8 @@ export function runUiV2Tests() {
   assert.equal(buildCommand('forceStartSequence'), 'g 0x04');
   assert.equal(buildCommand('finMoveRelative', { angle: -12.3 }), 'g 0x13 0x85 0xff');
   assert.equal(buildCommand('paraMoveRelative', { angle: 17.5 }), 'g 0x22 0xaf 0x00');
-  assert.equal(buildCommand('setParaOpen', { direction: 'CW' }), 'g 0x23 0x01');
-  assert.equal(buildCommand('setParaClose', { direction: 'CCW' }), 'g 0x24 0xff');
+  assert.equal(buildCommand('setParaOpen'), 'g 0x23');
+  assert.equal(buildCommand('setParaClose'), 'g 0x24');
   assert.equal(buildCommand('enterRecovery'), 'g 0x33');
   assert.equal(buildCommand('actuatorEmergency'), 'ae');
   assert.equal(buildCommand('liftoffEmergency'), 'le');
@@ -63,7 +63,4 @@ export function runUiV2Tests() {
   assert.equal(isActionAvailable('dumpMissionSd', 'Control', 'MissionLinkFallback'), true);
   assert.throws(() => buildCommand('selectMotorProfile', { profile: 1 }), /unknown action/);
   assert.throws(() => buildCommand('paraMoveRelative', { angle: 180 }), /< 180/);
-  assert.throws(() => buildCommand('setParaOpen', { direction: undefined }), /CW or CCW/);
-  assert.throws(() => buildCommand('setParaOpen', { direction: 'cw' }), /CW or CCW/);
-  assert.throws(() => buildCommand('setParaClose', { direction: 'LEFT' }), /CW or CCW/);
 }

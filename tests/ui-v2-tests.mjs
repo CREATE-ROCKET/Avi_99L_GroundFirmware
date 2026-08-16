@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { classifyUsbLine } from '../shared/usb-v1.js';
 import { TelemetryStore } from '../renderer/src/store-v2.js';
+import { createScreenRenderer } from '../renderer/src/screens-v2.js';
 import { buildCommand, encodeSignedTenths, isActionAvailable } from '../shared/command-catalog.js';
 import { readGoldenVectors } from './protocol-smoke.mjs';
 
@@ -15,6 +16,16 @@ export function runUiV2Tests() {
   assert.equal(store.state, 'CommandReceive');
   assert.equal(store.communicationMode, 'Normal');
   assert.equal(store.lastKnownMissionState, 'CommandReceive');
+
+  const commandOverview = createScreenRenderer({ store }).screen('overview');
+  for (const readinessLabel of [
+    'FIN ZERO', 'PARA OPEN', 'PARA CLOSE', 'MOTOR PROFILE',
+    'GYRO BIAS', 'GRAVITY REFERENCE', 'SSC ZERO',
+  ]) {
+    assert.match(commandOverview, new RegExp(readinessLabel));
+  }
+  assert.match(commandOverview, /data-action="startSequence"/);
+  assert.doesNotMatch(commandOverview, /data-action="startSequence"[^>]*disabled/);
 
   // Current canonical A8 vector from the versioned protocol tests.
   store.ingestLineRecord(envelope(

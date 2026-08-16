@@ -7,11 +7,6 @@ export const GenericCommand = Object.freeze({
   SET_FIN_ZERO: 0x11,
   START_FIN_ZERO_HOLD: 0x12,
   FIN_MOVE_RELATIVE: 0x13,
-  PARA_FREE: 0x20,
-  PARA_HOLD: 0x21,
-  PARA_MOVE_RELATIVE: 0x22,
-  SET_PARA_OPEN: 0x23,
-  SET_PARA_CLOSE: 0x24,
   PARA_OPEN: 0x25,
   PARA_CLOSE: 0x26,
   RUN_PREFLIGHT_CALIBRATION: 0x30,
@@ -40,11 +35,6 @@ export const ACTIONS = Object.freeze({
   setFinZero: { label: 'SetFinZero', states: ['CommandReceive'] },
   finZeroHold: { label: 'StartFinZeroHold', states: ['CommandReceive'] },
   finMoveRelative: { label: 'FinMoveRelative', states: ['CommandReceive'], needs: 'angle' },
-  paraFree: { label: 'ParaFree', states: ['CommandReceive'] },
-  paraHold: { label: 'ParaHold', states: ['CommandReceive'] },
-  paraMoveRelative: { label: 'ParaMoveRelative', states: ['CommandReceive'], needs: 'angle' },
-  setParaOpen: { label: 'SetParaOpen', states: ['CommandReceive'] },
-  setParaClose: { label: 'SetParaClose', states: ['CommandReceive'] },
   paraOpen: { label: 'ParaOpen', states: ['CommandReceive'] },
   paraClose: { label: 'ParaClose', states: ['CommandReceive'] },
   runCalibration: { label: 'RunPreflightCalibration', states: ['CommandReceive'] },
@@ -106,15 +96,6 @@ export function buildCommand(action, options = {}) {
     case 'setFinZero': return generic(GenericCommand.SET_FIN_ZERO);
     case 'finZeroHold': return generic(GenericCommand.START_FIN_ZERO_HOLD);
     case 'finMoveRelative': return generic(GenericCommand.FIN_MOVE_RELATIVE, encodeSignedTenths(options.angle));
-    case 'paraFree': return generic(GenericCommand.PARA_FREE);
-    case 'paraHold': return generic(GenericCommand.PARA_HOLD);
-    case 'paraMoveRelative': {
-      const angle = Number(options.angle);
-      if (!Number.isFinite(angle) || Math.abs(angle) >= 180) throw new RangeError('parachute relative move must be < 180 deg');
-      return generic(GenericCommand.PARA_MOVE_RELATIVE, encodeSignedTenths(angle));
-    }
-    case 'setParaOpen': return generic(GenericCommand.SET_PARA_OPEN);
-    case 'setParaClose': return generic(GenericCommand.SET_PARA_CLOSE);
     case 'paraOpen': return generic(GenericCommand.PARA_OPEN);
     case 'paraClose': return generic(GenericCommand.PARA_CLOSE);
     case 'runCalibration': return generic(GenericCommand.RUN_PREFLIGHT_CALIBRATION);

@@ -349,8 +349,8 @@ store.addEventListener('update', () => { scheduleRender(); void maybeReplyGround
 store.addEventListener('liftoff', (event) => triggerLiftoff(event.detail));
 store.addEventListener('command-result', (event) => {
   forceStartUi.handleCommandResult(event.detail);
-  const { matched, result } = event.detail ?? {};
-  if (matched && result?.phase === 0 && result.reason === 0) {
+  const { matched, result, entry } = event.detail ?? {};
+  if (matched && entry?.description?.expectsAck && result?.phase === 0 && result.reason === 0) {
     showToast(`ACK / id=${result.transactionId} command=0x${result.command.toString(16).padStart(2, '0').toUpperCase()}`);
   }
 });

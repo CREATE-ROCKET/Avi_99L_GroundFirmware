@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "99L rocket ground station for Windows and Linux",
+  "description": "99L rocket ground station for Windows, Linux, and macOS",
   "author": "CREATE-ROCKET",
   "main": "electron/main-v2.mjs",
   "scripts": {
@@ -14,6 +14,7 @@
     "build": "npm run build:renderer && node scripts/package-desktop.mjs --publish never",
     "build:win": "npm run build:renderer && node scripts/package-desktop.mjs --win portable --x64 --publish never",
     "build:linux": "npm run build:renderer && node scripts/package-desktop.mjs --linux AppImage --x64 --publish never && npm run verify:linux-package",
+    "build:mac": "npm run build:renderer && node scripts/package-desktop.mjs --mac dmg --x64 --arm64 --publish never",
     "verify:linux-package": "node scripts/verify-linux-package.mjs",
     "cli": "node scripts/ground-cli.mjs",
     "map:download": "node scripts/download-offline-map.mjs",
@@ -67,6 +68,12 @@
       ],
       "category": "Science",
       "artifactName": "CREATE-99L-Ground-Station-${version}-Linux-x64.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "artifactName": "CREATE-99L-Ground-Station-${version}-macOS-${arch}.${ext}"
     },
     "appImage": {
       "artifactName": "CREATE-99L-Ground-Station-${version}-Linux-x64.${ext}"

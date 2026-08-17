@@ -22,6 +22,10 @@ jobs:
             command: build:win
             artifact: CREATE-99L-Ground-Station-Windows-x64
             path: release/*.exe
+          - os: macos-latest
+            command: build:mac
+            artifact: CREATE-99L-Ground-Station-macOS
+            path: release/*.dmg
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30

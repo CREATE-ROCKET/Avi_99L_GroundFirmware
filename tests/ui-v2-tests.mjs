@@ -80,6 +80,9 @@ export function runUiV2Tests() {
   assert.equal(store.communicationMode, 'Normal');
   assert.equal(store.lastKnownMissionState, 'LiftoffDetection');
   assert.equal(store.attitudeSamples.length, 1);
+  const liftoffScreen = createScreenRenderer({ store }).screen('overview');
+  assert.match(liftoffScreen, /data-action="cancelSequence"/);
+  assert.doesNotMatch(liftoffScreen, /data-action="disableFinControl"/);
 
   // Ground board BOOT/reconnectで旧sessionの姿勢を残さない。
   const resetAttitudeStore = new TelemetryStore();
@@ -98,13 +101,14 @@ export function runUiV2Tests() {
   assert.equal(recoveryStore.attitudeSamples.length, 0);
 
   assert.equal(buildCommand('startSequence'), 'g 0x01');
+  assert.equal(buildCommand('cancelSequence'), 'g 0x02');
   assert.equal(buildCommand('finFree'), 'g 0x10');
   assert.equal(buildCommand('setFinZero'), 'g 0x11');
   assert.equal(buildCommand('finHold'), 'g 0x13');
   assert.equal(buildCommand('paraOpen'), 'g 0x25');
   assert.equal(buildCommand('paraClose'), 'g 0x26');
   for (const omitted of [
-    'forceStartSequence', 'cancelSequence', 'disableFinControl', 'finZeroHold',
+    'forceStartSequence', 'disableFinControl', 'finZeroHold',
     'finMoveRelative', 'paraFree', 'paraHold', 'paraMoveRelative', 'setParaOpen',
     'setParaClose', 'runCalibration', 'exportFlash', 'enterRecovery', 'exitRecovery', 'actuatorEmergency',
   ]) {
@@ -115,6 +119,10 @@ export function runUiV2Tests() {
   assert.equal(buildCommand('wakeMission'), 'local 119');
   assert.equal(isActionAvailable('startSequence', 'Control', 'Normal'), false);
   assert.equal(isActionAvailable('startSequence', 'CommandReceive', 'Normal'), true);
+  assert.equal(isActionAvailable('cancelSequence', 'CommandReceive', 'Normal'), false);
+  assert.equal(isActionAvailable('cancelSequence', 'LiftoffDetection', 'Normal'), true);
+  assert.equal(isActionAvailable('cancelSequence', 'EngineBurn', 'Normal'), false);
+  assert.equal(isActionAvailable('cancelSequence', 'LiftoffDetection', 'MissionLinkFallback'), false);
   assert.equal(isActionAvailable('actuatorEmergency', 'CommandReceive', 'Normal'), false);
   assert.equal(isActionAvailable('forceStartSequence', 'CommandReceive', 'Normal'), false);
   assert.equal(isActionAvailable('selectMotorProfile', 'CommandReceive', 'Normal'), false);

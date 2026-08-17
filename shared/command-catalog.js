@@ -1,5 +1,6 @@
 export const GenericCommand = Object.freeze({
   START_SEQUENCE: 0x01,
+  CANCEL_SEQUENCE: 0x02,
   FIN_FREE: 0x10,
   SET_FIN_ZERO: 0x11,
   FIN_HOLD: 0x13,
@@ -20,6 +21,7 @@ export const LocalCommand = Object.freeze({
 
 export const ACTIONS = Object.freeze({
   startSequence: { label: 'StartSequence', states: ['CommandReceive'] },
+  cancelSequence: { label: 'CancelSequence', states: ['LiftoffDetection'] },
   finFree: { label: 'FinFree', states: ['CommandReceive'] },
   setFinZero: { label: 'FinZero', states: ['CommandReceive'] },
   finHold: { label: 'FinHold', states: ['CommandReceive'] },
@@ -72,6 +74,7 @@ export function isActionAvailable(action, missionState, communicationMode = 'Nor
 export function buildCommand(action, options = {}) {
   switch (action) {
     case 'startSequence': return generic(GenericCommand.START_SEQUENCE);
+    case 'cancelSequence': return generic(GenericCommand.CANCEL_SEQUENCE);
     case 'finFree': return generic(GenericCommand.FIN_FREE);
     case 'setFinZero': return generic(GenericCommand.SET_FIN_ZERO);
     case 'finHold': return generic(GenericCommand.FIN_HOLD);

@@ -3,7 +3,6 @@ import { createScreenRenderer as createBaseScreenRenderer } from './screens-v2-b
 
 const OMITTED_MISSION_ACTIONS = [
   'forceStartSequence',
-  'cancelSequence',
   'disableFinControl',
   'runCalibration',
   'exportFlash',

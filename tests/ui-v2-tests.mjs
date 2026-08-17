@@ -74,6 +74,21 @@ export function runUiV2Tests() {
   assert.equal(typeof store.getLatestValue('Fallback status.bit4').value, 'boolean');
   assert.equal(store.attitudeSamples.length, 0);
 
+  // A8専用gnssStateはNormal復帰後に現在値として残さず、A0の位置semanticを表示する。
+  const fallbackToCommandStore = new TelemetryStore();
+  fallbackToCommandStore.ingestLineRecord(envelope(
+    '@RX usb_v=1 seq=26 board_ms=2000 dt_ms=500 rssi_present=1 rssi_raw=172 rssi_dbm=-84 valid=1 header=0xA8 len=24 error=NONE raw=A8010901132003060A00090008000C00F4FF2800B4BE01B8', 1500));
+  assert.notEqual(fallbackToCommandStore.getLatestValue('gnssState'), null);
+  fallbackToCommandStore.ingestLineRecord(envelope(vectors.get('RX_A0_VALID'), 2000));
+  assert.equal(fallbackToCommandStore.state, 'CommandReceive');
+  assert.equal(fallbackToCommandStore.communicationMode, 'Normal');
+  assert.equal(fallbackToCommandStore.getLatestValue('gnssState'), null);
+  assert.equal(fallbackToCommandStore.getLatestValue('east').status, 'NO_FIX');
+  assert.match(
+    createScreenRenderer({ store: fallbackToCommandStore }).topbar(),
+    /<span>GNSS<\/span><strong>NO_FIX<\/strong>/,
+  );
+
   // One valid MissionStatus-bearing state packet immediately restores Normal.
   store.ingestLineRecord(envelope(vectors.get('RX_A1_VALID'), 2000));
   assert.equal(store.state, 'LiftoffDetection');

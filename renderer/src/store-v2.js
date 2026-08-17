@@ -213,6 +213,7 @@ export class TelemetryStore extends BaseTelemetryStore {
   }
 
   getLatestValue(key) {
+    if (key === 'gnssState' && this.communicationMode !== 'MissionLinkFallback') return null;
     let actualKey = key;
     if (this.communicationMode === 'MissionLinkFallback' && FALLBACK_ALIASES[key]) actualKey = FALLBACK_ALIASES[key];
     else if (CONTROL_ALIASES[key]) actualKey = CONTROL_ALIASES[key];
